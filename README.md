@@ -3,7 +3,7 @@
 Repository Implementing **Heterogeneous Network Graph Neural Network** (HetNetGNN) on Wireless Cell-Free Network.
 
 ## Requirements
-``` commandline
+```commandline
 python==3.9.16
 matplotlib==3.7.0
 numpy==1.23.5

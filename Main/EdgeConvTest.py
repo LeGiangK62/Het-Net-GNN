@@ -7,7 +7,7 @@ import torch_geometric.transforms as T
 from torch_geometric.datasets import DBLP
 from torch_geometric.nn import HGTConv, Linear
 
-path = osp.join(osp.dirname(osp.realpath(__file__)), '../../data/DBLP')
+path = osp.join(osp.dirname(osp.realpath(__file__)), '../../../data/DBLP')
 # We initialize conference node features with a single one-vector as feature:
 dataset = DBLP(path, transform=T.Constant(node_types='conference'))
 data = dataset[0]

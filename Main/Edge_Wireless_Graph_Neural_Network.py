@@ -1,9 +1,6 @@
 import torch
 import numpy as np
-import scipy  # for testing
 
-
-from torch.nn import Sequential as Seq, Linear as Lin, ReLU, Sigmoid
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import Linear, HGTConv

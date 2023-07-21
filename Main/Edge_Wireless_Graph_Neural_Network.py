@@ -3,12 +3,11 @@ import numpy as np
 
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import Linear, HGTConv
+
 
 from WSN_GNN import generate_channels_wsn
-
+from hgt_conv import HGTGNN
 from het_net_gnn import RGCN
-# from hgt_conv import HGTConv
 
 
 #region Create HeteroData from the wireless system
@@ -55,103 +54,6 @@ def adj_matrix(num_from, num_dest):
     return np.array(adj)
 
 
-#region Class Pending
-# class HeteroWirelessData(HeteroData):
-#     def __init__(self, channel_matrices):
-#         self.channel_matrices = channel_matrices
-#         self.adj, self.adj_t = self.get_cg()
-#         self.num_users = channel_matrices.shape[2]
-#         self.num_aps = channel_matrices.shape[1]
-#         self.num_samples = channel_matrices.shape[0]
-#         self.graph_list = self.build_all_graph()
-#         super().__init__(name="ResourceAllocation")
-#
-#     def get_cg(self):
-#         # The graph is a fully connected bipartite graph
-#         self.adj = []
-#         self.adj_t = []
-#         for i in range(0, self.num_users):
-#             for j in range(0, self.num_aps):
-#                 self.adj.append([i, j])
-#                 self.adj_t.append([j, i])
-#         return self.adj, self.adj_t
-#
-#     def __len__(self):
-#         # 'Denotes the total number of samples'
-#         return self.num_samples
-#
-#     def __getitem__(self, index):
-#         # 'Generates one sample of data'
-#         # Select sample
-#         return self.graph_list[index], self.direct[index], self.cross[index]
-#
-#     # @staticmethod
-#     def build_graph(self, index):
-#         user_feat = torch.zeros(num_users, num_users_features)  # features of user_node
-#         ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
-#         edge_feat = self.channel_matrices[index, :, :]
-#         graph = HeteroData({
-#             'ue': {'x': user_feat},
-#             'ap': {'x': ap_feat}
-#         })
-#
-#         # Create edge types and building the graph connectivity:
-#         graph['ue', 'up', 'ap'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
-#         # graph['ap', 'down', 'ue'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
-#         return graph
-#
-#     def build_all_graph(self):
-#         self.graph_list = []
-#         n = self.num_samples  # number of samples in dataset
-#         for i in range(n):
-#             graph = self.build_graph(i)
-#             self.graph_list.append(graph)
-#         return self.graph_list
-#
-#endregion
-
-
-#region Build Heterogeneous GNN
-class HetNetGNN(torch.nn.Module):
-    def __init__(self, data, hidden_channels, out_channels, num_heads, num_layers):
-        super().__init__()
-
-        self.lin_dict = torch.nn.ModuleDict()
-        for node_type in data.node_types:
-            self.lin_dict[node_type] = Linear(-1, hidden_channels)
-
-        self.convs = torch.nn.ModuleList()
-        for _ in range(num_layers):
-            conv = HGTConv(hidden_channels, hidden_channels, data.metadata(),
-                           num_heads, group='sum')
-            self.convs.append(conv)
-
-        self.lin = Linear(hidden_channels, out_channels)
-
-        self.lin1 = Linear(hidden_channels, out_channels)
-
-    def forward(self, x_dict, edge_index_dict):
-        original = x_dict['ue'].clone
-        x_dict = {
-            node_type: self.lin_dict[node_type](x).relu_()
-            for node_type, x in x_dict.items()
-        }
-
-        for conv in self.convs:
-            x_dict = conv(x_dict, edge_index_dict)
-
-        original = x_dict['ue']  # not original
-        power = self.lin(x_dict['ue'])
-        ap_selection = self.lin1(x_dict['ue'])
-        ap_selection = torch.abs(ap_selection).int()
-
-        out = torch.cat((original[:, 1].unsqueeze(-1), power[:, 1].unsqueeze(-1), ap_selection[:, 1].unsqueeze(-1)), 1)
-        return out
-
-
-#endregion
-
-
 #region Training and Testing functions
 def loss_function(output, batch, is_train=True):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -188,7 +90,6 @@ def loss_function(output, batch, is_train=True):
         return torch.neg(sum_rate / mean_power)
     else:
         return sum_rate / mean_power
-
 
 
 def train(data_loader):
@@ -265,44 +166,22 @@ if __name__ == '__main__':
     data = train_data[0]
     data = data.to(device)
 
-    model = HetNetGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
-    model = model.to(device)
+    # model = HGTGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
+    # model = model.to(device)
 
-    model = RGCN(data, num_layers=1)
+    model = RGCN(data, num_layers=1)  # input data for the metadata (list of node types and edge types
     model = model.to(device)
 
     # # # print(data.edge_index_dict)
     with torch.no_grad():
         output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-    print(output)
-
-    # data = test_data[0]
-    # data = data.to(device)
-    #
-    # with torch.no_grad():
-    #     output = model(data.x_dict, data.edge_index_dict)
-    #     print(output)
-
+    # print(output)
 
 
     # Training and testing
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
 
-
-    # Test
-    # model.train()
-    # device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # total_examples = total_loss = 0
-    # for batch in train_loader:
-    #     optimizer.zero_grad()
-    #     batch = batch.to(device_type)
-    #     # batch_size = batch['ue'].batch_size
-    #     break
-    # # print(batch)
-    # out = model(batch.x_dict, batch.edge_index_dict)
-    # print(out)
-    #
     # for epoch in range(1, 101):
     #     loss = train(train_loader)
     #     test_acc = test(test_loader)

@@ -4,12 +4,15 @@ import torch
 import torch.nn as nn
 from torch.nn import Sequential as Seq, Linear as Lin, ReLU, Sigmoid, BatchNorm1d as BN
 from torch import Tensor
+import torch.nn.functional as F
 
 from torch_geometric.nn.conv import MessagePassing, HeteroConv
 from torch_geometric.nn.module_dict import ModuleDict
 from torch_geometric.typing import EdgeType, Metadata, NodeType, SparseTensor
 from torch_geometric.nn.inits import reset
+
 from torch_geometric.utils import softmax
+
 
 
 def mlp(channels, batch_norm=True):
@@ -34,8 +37,11 @@ class EdgeConv(MessagePassing):
         for edge_type in metadata[1]:
             self.lin_edge['__'.join(edge_type)] = mlp([edge_dim, 32])
 
-        self.power_mlp = mlp([32 + 3, 1])
-        self.ap_mlp = mlp([32 + 3, 1])
+        self.power_mlp = mlp([32 + 3, 16])
+        self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+        self.ap_mlp = mlp([32 + 3, 16])
+        self.ap_mlp = Seq(*[self.ap_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+
 
         self.reset_parameters()
 

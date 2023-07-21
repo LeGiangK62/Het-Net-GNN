@@ -55,27 +55,29 @@ def adj_matrix(num_from, num_dest):
 
 
 #region Training and Testing functions
-def loss_function(output, batch, is_train=True):
+def loss_function(output, batch, size, is_train=True):
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    num_user = batch['ue']['x'].shape[0]
-    num_ap = batch['ap']['x'].shape[0]
+    num_ue, num_ap, batch_size = size
+
+    output = torch.reshape(output, (batch_size, num_ue, -1))
     ##
     channel_matrix = batch['ue', 'ap']['edge_attr']
     ##
-    power_max = output[:, 0]
-    power = output[:, 1]
-    ap_selection = output[:, 2]
+    power_max = output[:, :,0]
+    power = output[:, :, 1] * power_max
+    ap_selection = output[:, :, 2] * num_ap
     # power_max = batch['ue']['x'][:, 0]
     # power = batch['ue']['x'][:, 1]
     # ap_selection = batch['ue']['x'][:, 2]
     ##
     ap_selection = ap_selection.int()
-    index = torch.arange(num_user)
 
-    G = torch.reshape(channel_matrix, (-1, num_ap, num_user))
+    G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
     P = torch.zeros_like(G, requires_grad=True).clone()
-    P[0, ap_selection[index], index] = power_max * power
+    P[torch.arange(2).unsqueeze(1), ap_selection, torch.arange(5)] = power
+
     ##
     # new_noise = torch.from_numpy(noise_matrix).to(device)
     desired_signal = torch.sum(torch.mul(P, G), dim=1).unsqueeze(-1)
@@ -87,9 +89,9 @@ def loss_function(output, batch, is_train=True):
     mean_power = torch.mean(torch.sum(P.permute((0,2,1)), 1))
 
     if is_train:
-        return torch.neg(sum_rate / mean_power)
+        return torch.neg(sum_rate )#/ mean_power)
     else:
-        return sum_rate / mean_power
+        return sum_rate #/ mean_power
 
 
 def train(data_loader):
@@ -99,13 +101,17 @@ def train(data_loader):
     for batch in data_loader:
         optimizer.zero_grad()
         batch = batch.to(device_type)
-        # Add counting part here => to reshape output when calculate loss
-        # K = d_train.shape[-1]
-        # n = len(g.nodes['UE'].data['feat'])
-        # bs = len(g.nodes['UE'].data['feat']) // K
-        # batch_size = batch['ue'].batch_size
+        #
+        num_ues = batch['ue'].x.shape[0]
+        num_aps = batch['ap'].x.shape[0]
+        num_edges = batch['ue', 'ap'].edge_index.shape[1]
+        batch_size = int(num_ues * num_aps / num_edges)
+        num_ues = int(num_ues / batch_size)
+        num_aps = int(num_aps / batch_size)
+        #
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
-        tmp_loss = loss_function(out, data, True)
+        out = out['ue']
+        tmp_loss = loss_function(out, batch, (num_ues, num_aps, batch_size), True)
         tmp_loss.backward()
         optimizer.step()
         #total_examples += batch_size
@@ -120,9 +126,17 @@ def test(data_loader):
     total_examples = total_loss = 0
     for batch in data_loader:
         batch = batch.to(device_type)
-        # batch_size = batch['ue'].batch_size
-        out = model(batch.x_dict, batch.edge_index_dict)
-        tmp_loss = loss_function(out, batch, False)
+        #
+        num_ues = batch['ue'].x.shape[0]
+        num_aps = batch['ap'].x.shape[0]
+        num_edges = batch['ue', 'ap'].edge_index.shape[1]
+        batch_size = int(num_ues * num_aps / num_edges)
+        num_ues = int(num_ues / batch_size)
+        num_aps = int(num_aps / batch_size)
+        #
+        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+        out = out['ue']
+        tmp_loss = loss_function(out, batch, (num_ues, num_aps, batch_size), False)
         #total_examples += batch_size
         total_loss += float(tmp_loss) #* batch_size
 
@@ -156,7 +170,7 @@ if __name__ == '__main__':
     train_data = convert_to_hetero_data(X_train)
     test_data = convert_to_hetero_data(X_test)
 
-    batchSize = 1
+    batchSize = 2
 
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=1)
@@ -173,8 +187,8 @@ if __name__ == '__main__':
     model = model.to(device)
 
     # # # print(data.edge_index_dict)
-    with torch.no_grad():
-        output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
+    # with torch.no_grad():
+    #     output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
     # print(output)
 
 
@@ -182,8 +196,9 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
 
-    # for epoch in range(1, 101):
-    #     loss = train(train_loader)
-    #     test_acc = test(test_loader)
-    #     print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')
+    for epoch in range(1, 20):
+        loss = train(train_loader)
+        if epoch % 8 == 1:
+            test_acc = test(test_loader)
+            print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')
 

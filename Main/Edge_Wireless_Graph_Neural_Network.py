@@ -76,7 +76,7 @@ def loss_function(output, batch, size, is_train=True):
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
     P = torch.zeros_like(G, requires_grad=True).clone()
-    P[torch.arange(2).unsqueeze(1), ap_selection, torch.arange(5)] = power
+    P[torch.arange(batch_size).unsqueeze(1), ap_selection, torch.arange(num_ue)] = power
 
     ##
     # new_noise = torch.from_numpy(noise_matrix).to(device)

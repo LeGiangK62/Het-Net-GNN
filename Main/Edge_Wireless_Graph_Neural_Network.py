@@ -102,9 +102,9 @@ def train(data_loader):
         optimizer.zero_grad()
         batch = batch.to(device_type)
         #
-        num_ues = batch['ue'].x.shape[0]
-        num_aps = batch['ap'].x.shape[0]
-        num_edges = batch['ue', 'ap'].edge_index.shape[1]
+        num_ues = batch['ue'].num_nodes
+        num_aps = batch['ap'].num_nodes
+        num_edges = batch['ue', 'ap'].num_edges
         batch_size = int(num_ues * num_aps / num_edges)
         num_ues = int(num_ues / batch_size)
         num_aps = int(num_aps / batch_size)
@@ -127,9 +127,9 @@ def test(data_loader):
     for batch in data_loader:
         batch = batch.to(device_type)
         #
-        num_ues = batch['ue'].x.shape[0]
-        num_aps = batch['ap'].x.shape[0]
-        num_edges = batch['ue', 'ap'].edge_index.shape[1]
+        num_ues = batch['ue'].num_nodes
+        num_aps = batch['ap'].num_nodes
+        num_edges = batch['ue', 'ap'].num_edges
         batch_size = int(num_ues * num_aps / num_edges)
         num_ues = int(num_ues / batch_size)
         num_aps = int(num_aps / batch_size)

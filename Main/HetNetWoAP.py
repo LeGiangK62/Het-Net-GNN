@@ -75,17 +75,22 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     return Hs, noise, position, adj, index
 
 #region Create HeteroData from the wireless system
-def convert_to_hetero_data(channel_matrices, p_max, ap_selection):
+def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
     graph_list = []
     num_sam, num_aps, num_users = channel_matrices.shape
     for i in range(num_sam):
         x1 = torch.ones(num_users, 1) * p_max
         x2 = torch.zeros(num_users, 1)  # power allocation
-        x3 = torch.tensor(ap_selection)
-        user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
+        # x3 = torch.tensor(ap_selection)
+        # user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
+        user_feat = torch.cat((x1, x2), 1)  # features of user_node
         ap_feat = torch.ones(num_aps, num_aps_features)  # features of user_node
-        edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
-        edge_feat_downlink = channel_matrices[i, :, :].reshape(-1, 1)
+        y1 = channel_matrices[i, :, :].reshape(-1, 1)
+        y2 = ap_selection_matrix[i, :, :].reshape(-1, 1)
+
+        edge_feat_uplink = np.concatenate((y1, y2), 1)
+
+        edge_feat_downlink = np.concatenate((y1, y2), 1)
         graph = HeteroData({
             'ue': {'x': user_feat},
             'ap': {'x': ap_feat}
@@ -125,22 +130,24 @@ def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False
 
     output = torch.reshape(output, (batch_size, num_ue, -1))
     ##
-    channel_matrix = batch['ue', 'ap']['edge_attr']
+    channel_matrix = batch['ue', 'ap']['edge_attr'][:,0]
     ##
     power_max = output[:, :, 0]
     power = output[:, :, 1] * power_max
-    ap_selection = output[:, :, 2]
+    ap_selection = batch['ue', 'ap']['edge_attr'][:, 1]
     # power_max = batch['ue']['x'][:, 0]
+    # Get ap_selection from the edge_attr
     # power = batch['ue']['x'][:, 1]
     # ap_selection = batch['ue']['x'][:, 2]
     ##
-    ap_selection = ap_selection.int()
+    P = torch.reshape(ap_selection, (-1, num_ap, num_ue))
 
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
-    P = torch.zeros_like(G, requires_grad=True).clone()
-    P[torch.arange(batch_size).unsqueeze(1), ap_selection, torch.arange(num_ue)] = power
-
+    # P = torch.zeros_like(G, requires_grad=True).clone()
+    # P[torch.arange(batch_size).unsqueeze(1), ap_selection, torch.arange(num_ue)] = power
+    power = power.unsqueeze(1)
+    P = P * power
     ##
     # new_noise = torch.from_numpy(noise_matrix).to(device)
     new_noise = noise_matrix
@@ -222,8 +229,8 @@ if __name__ == '__main__':
     N = 5  # number of nodes
     R = 10  # radius
 
-    num_users_features = 3
-    num_aps_features = 3
+    num_users_features = 2
+    num_aps_features = 2
 
     num_train = 20  # number of training samples
     num_test = 4  # number of test samples
@@ -239,8 +246,10 @@ if __name__ == '__main__':
     X_train, noise_train, pos_train, adj_train, index_train = generate_channels(K, N, num_train, var_noise, R)
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels(K + 1, N + 10, num_test, var_noise, R)
 
-    theta_train = np.random.randint(K, size=(N, 1))
-    theta_test = np.random.randint(K + 1, size=(N + 10, 1))
+    # theta_train = np.random.randint(K, size=(N, 1))
+    # theta_test = np.random.randint(K + 1, size=(N + 10, 1))
+    theta_train = np.random.randint(2, size=(num_train, K, N))
+    theta_test = np.random.randint(2, size=(num_test, K+1, N+10))
     # Maybe need normalization here
     train_data = convert_to_hetero_data(X_train, power_threshold, theta_train)
     test_data = convert_to_hetero_data(X_test, power_threshold, theta_test)
@@ -271,7 +280,7 @@ if __name__ == '__main__':
     # # Training and testing
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
-    for epoch in range(1, 10):
+    for epoch in range(1, 50):
         loss = train(train_loader, noise_train)
         test_acc = test(test_loader, noise_train)
         if (epoch % 5 == 1):

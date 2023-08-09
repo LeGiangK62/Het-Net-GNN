@@ -37,9 +37,9 @@ class EdgeConv(MessagePassing):
         for edge_type in metadata[1]:
             self.lin_edge['__'.join(edge_type)] = mlp([edge_dim, 32])
 
-        self.power_mlp = mlp([32 + 3, 16])
+        self.power_mlp = mlp([32 + node_dim, 16])
         self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
-        self.ap_mlp = mlp([32 + 3, 16])
+        self.ap_mlp = mlp([32 + node_dim, 16])
         self.ap_mlp = Seq(*[self.ap_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
 
@@ -111,13 +111,13 @@ class EdgeConv(MessagePassing):
         # Update node representations with the aggregated messages
         # aggr_out  = output of aggregation function, the following is the input of the propagation function
         power_max = node_feat[:, 0]
-        ap_selection = node_feat[:, 2].unsqueeze(-1)
+        # ap_selection = node_feat[:, 2].unsqueeze(-1)
         node_mlp = self.lin_node[dst_type]
         res = node_mlp(node_feat)
         tmp = torch.cat([node_feat, aggr_out + res], dim=1)
         power = self.power_mlp(tmp)
         # ap_selection = self.ap_mlp(tmp)
-        return torch.cat([power_max.unsqueeze(-1), power, ap_selection], dim=1)
+        return torch.cat([power_max.unsqueeze(-1), power], dim=1)
 
 
 class RGCN(nn.Module):
@@ -127,7 +127,7 @@ class RGCN(nn.Module):
         self.convs = torch.nn.ModuleList()
         self.mlp = mlp([32, 16])
         for _ in range(num_layers):
-            conv = EdgeConv(node_dim=3, edge_dim=1,
+            conv = EdgeConv(node_dim=2, edge_dim=2,
                             metadata=dataset.metadata())
             self.convs.append(conv)
 

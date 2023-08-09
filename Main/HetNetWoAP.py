@@ -7,17 +7,19 @@ from torch_geometric.loader import DataLoader
 
 from WSN_GNN import generate_channels_wsn
 from hgt_conv import HGTGNN
-from het_net_gnn import RGCN
+from GNNWoAP import RGCN
 
 
 #region Create HeteroData from the wireless system
-def convert_to_hetero_data(channel_matrices):
+def convert_to_hetero_data(channel_matrices, ap_selection):
+    # ap_selection = [1 2 0 3 2 3 1 0]T
+    # ap_selection[n] is the index of the AP that UE_n selects.
     graph_list = []
     num_sam, num_aps, num_users = channel_matrices.shape
     for i in range(num_sam):
         x1 = torch.ones(num_users, 1)
         x2 = torch.zeros(num_users, 1)  # power allocation
-        x3 = torch.ones((num_users, 1), dtype=torch.int32)  # ap selection?
+        x3 = torch.tensor(ap_selection)
         user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
         ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
         edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
@@ -66,7 +68,7 @@ def loss_function(output, batch, size, is_train=True):
     ##
     power_max = output[:, :,0]
     power = output[:, :, 1] * power_max
-    ap_selection = output[:, :, 2] * num_ap
+    ap_selection = output[:, :, 2]
     # power_max = batch['ue']['x'][:, 0]
     # power = batch['ue']['x'][:, 1]
     # ap_selection = batch['ue']['x'][:, 2]
@@ -166,9 +168,11 @@ if __name__ == '__main__':
     X_train, noise_train, pos_train, adj_train, index_train = generate_channels_wsn(K, N, num_train, var_noise, R)
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var_noise, R)
 
+    theta_train = np.random.randint(K, size=(N, 1))
+    theta_test = np.random.randint(K + 1, size=(N + 10, 1))
     # Maybe need normalization here
-    train_data = convert_to_hetero_data(X_train)
-    test_data = convert_to_hetero_data(X_test)
+    train_data = convert_to_hetero_data(X_train, theta_train)
+    test_data = convert_to_hetero_data(X_test, theta_test)
 
     batchSize = 2
 

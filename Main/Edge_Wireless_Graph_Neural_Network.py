@@ -11,15 +11,15 @@ from het_net_gnn import RGCN
 
 
 #region Create HeteroData from the wireless system
-def convert_to_hetero_data(channel_matrices):
+def convert_to_hetero_data(channel_matrices, p_max):
     graph_list = []
     num_sam, num_aps, num_users = channel_matrices.shape
     for i in range(num_sam):
-        x1 = torch.ones(num_users, 1)
+        x1 = torch.ones(num_users, 1) * p_max
         x2 = torch.zeros(num_users, 1)  # power allocation
-        x3 = torch.ones((num_users, 1), dtype=torch.int32)  # ap selection?
+        x3 = torch.ones((num_users, 1))  # ap selection?
         user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
-        ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
+        ap_feat = torch.ones(num_aps, num_aps_features)  # features of user_node
         edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
         edge_feat_downlink = channel_matrices[i, :, :].reshape(-1, 1)
         graph = HeteroData({
@@ -44,7 +44,6 @@ def convert_to_hetero_data(channel_matrices):
         # graph['ap', 'downlink', 'ue'].edge_attr  = torch.tensor(edge_feat_downlink, dtype=torch.float)
         graph_list.append(graph)
     return graph_list
-
 
 def adj_matrix(num_from, num_dest):
     adj = []
@@ -72,6 +71,7 @@ def loss_function(output, batch, size, is_train=True):
     # ap_selection = batch['ue']['x'][:, 2]
     ##
     ap_selection = ap_selection.int()
+    ap_selection = torch.round(ap_selection)
 
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
@@ -114,10 +114,10 @@ def train(data_loader):
         tmp_loss = loss_function(out, batch, (num_ues, num_aps, batch_size), True)
         tmp_loss.backward()
         optimizer.step()
-        #total_examples += batch_size
-        total_loss += float(tmp_loss) #* batch_size
+        total_examples += batch_size
+        total_loss += float(tmp_loss) * batch_size
 
-    return total_loss #/ total_examples
+    return total_loss / total_examples
 
 
 def test(data_loader):
@@ -137,10 +137,9 @@ def test(data_loader):
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
         tmp_loss = loss_function(out, batch, (num_ues, num_aps, batch_size), False)
-        #total_examples += batch_size
-        total_loss += float(tmp_loss) #* batch_size
-
-    return total_loss #/ total_examples
+        total_examples += batch_size
+        total_loss += float(tmp_loss) * batch_size
+    return total_loss / total_examples
 #endregion
 
 
@@ -167,8 +166,8 @@ if __name__ == '__main__':
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var_noise, R)
 
     # Maybe need normalization here
-    train_data = convert_to_hetero_data(X_train)
-    test_data = convert_to_hetero_data(X_test)
+    train_data = convert_to_hetero_data(X_train, pmax)
+    test_data = convert_to_hetero_data(X_test, pmax)
 
     batchSize = 2
 

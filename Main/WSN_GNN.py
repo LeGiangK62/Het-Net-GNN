@@ -146,7 +146,13 @@ def generate_channels_wsn(num_ap, num_user, num_samples, var_noise=1.0, radius=1
 
     adj = adj_matrix(num_user * num_ap)
 
+    print(var_noise)
+    print(Hs.mean())
+
     Hs, noise = normalize_matrix(Hs, var_noise)
+
+    print(Hs.mean())
+
 
     return Hs, noise, position, adj, index
 

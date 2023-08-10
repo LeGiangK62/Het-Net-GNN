@@ -82,20 +82,6 @@ class EdgeConv(MessagePassing):
                                  dst_type=dst_type, edge_attr=edge_attr, size=(x_j.shape[0], x_i.shape[0]))
             out_dict[dst_type] = out
 
-        # Iterate over node-types:
-        # for node_type, outs in out_dict.items():
-            # out = group(outs, self.group)
-            #
-            # if out is None:
-            #     out_dict[node_type] = None
-            #     continue
-            #
-            # out = self.a_lin[node_type](F.gelu(out))
-            # if out.size(-1) == x_dict[node_type].size(-1):
-            #     alpha = self.skip[node_type].sigmoid()
-            #     out = alpha * out + (1 - alpha) * x_dict[node_type]
-            # out_dict[node_type] = out
-
         return out_dict
 
     # def message(self, x_j: Tensor, src_type, edge_type, node_mlp, edge_rel) -> Tensor:
@@ -111,12 +97,10 @@ class EdgeConv(MessagePassing):
         # Update node representations with the aggregated messages
         # aggr_out  = output of aggregation function, the following is the input of the propagation function
         power_max = node_feat[:, 0]
-        # ap_selection = node_feat[:, 2].unsqueeze(-1)
         node_mlp = self.lin_node[dst_type]
         res = node_mlp(node_feat)
         tmp = torch.cat([node_feat, aggr_out + res], dim=1)
         power = self.power_mlp(tmp)
-        # ap_selection = self.ap_mlp(tmp)
         return torch.cat([power_max.unsqueeze(-1), power], dim=1)
 
 

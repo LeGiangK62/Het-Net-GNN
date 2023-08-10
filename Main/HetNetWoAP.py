@@ -104,13 +104,6 @@ def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
         graph['ap', 'downlink', 'ue'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
                                                                 dtype=torch.int64).contiguous()
 
-        # Swap
-        # graph['ue', 'uplink', 'ap'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
-        #                                                       dtype=torch.int64)
-        # graph['ap', 'downlink', 'ue'].edge_index = torch.tensor(adj_matrix(num_users, num_aps).transpose(),
-        #                                                         dtype=torch.int64)
-
-        # graph['ap', 'downlink', 'ue'].edge_attr  = torch.tensor(edge_feat_downlink, dtype=torch.float)
         graph_list.append(graph)
     return graph_list
 

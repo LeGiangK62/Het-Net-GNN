@@ -29,7 +29,7 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
                            + 1j * np.random.randn(num_samples, 1, num_user))
 
     if radius == 0:
-        Hs = abs(CH)
+        Hs = abs(CH*np.ones((num_samples, num_ap, num_user)))
     else:
         for each_sample in range(num_samples):
             pos = []
@@ -64,7 +64,6 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
         # FSPL_old = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
         FSPL = - (120.9 + 37.6 * np.log10(dist_mat/1000))
         FSPL = 10 ** (FSPL / 10)
-
         # print(f'FSPL_old:{FSPL_old.sum()}')
         # print(f'FSPL_new:{FSPL.sum()}')
         Hs = abs(CH * FSPL)
@@ -103,7 +102,6 @@ def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
                                                               dtype=torch.int64).contiguous()
         graph['ap', 'downlink', 'ue'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
                                                                 dtype=torch.int64).contiguous()
-
         graph_list.append(graph)
     return graph_list
 
@@ -116,7 +114,7 @@ def adj_matrix(num_from, num_dest):
     return np.array(adj)
 
 
-# region Training and Testing functions
+#region Training and Testing functions
 def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
@@ -209,18 +207,16 @@ def test(data_loader, noise, is_log=False):
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
     if is_log:
-        print(out)
-        # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
+      print(out[:3])
+      # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
     return total_loss / total_examples
-
-
-# endregion
+#endregion
 
 
 if __name__ == '__main__':
     K = 4  # number of APs
     N = 5  # number of nodes
-    R = 10  # radius
+    R = 0  # radius
 
     num_users_features = 2
     num_aps_features = 2
@@ -232,7 +228,7 @@ if __name__ == '__main__':
     pmax = 1
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
-    var_noise = 10e-13
+    var_noise = 1
 
     power_threshold = 2.0
 
@@ -277,5 +273,5 @@ if __name__ == '__main__':
         loss = train(train_loader, noise_train)
         test_acc = test(test_loader, noise_train)
         if (epoch % 5 == 1):
-            test(train_loader, noise_train, True)
+            # test(train_loader, noise_train, True)
             print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')

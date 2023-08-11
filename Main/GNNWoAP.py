@@ -88,12 +88,11 @@ class EdgeConv(MessagePassing):
     def message(self, x_j: Tensor, src_type, edge_type, edge_attr) -> Tensor:
         # This function is called when we use self.propagate - Used the given parameters too.
         # What each neighbor node send to target along the edges
-        # Adding the edge relation here
         node_mlp = self.lin_node[src_type]
         edge_mlp = self.lin_edge[edge_type]
-        return node_mlp(x_j) + edge_mlp(edge_attr)
+        return node_mlp(x_j)  + edge_mlp(edge_attr)
 
-    def update(self, aggr_out, node_feat, dst_type, edge_index):
+    def update(self, aggr_out, node_feat, dst_type):
         # Update node representations with the aggregated messages
         # aggr_out  = output of aggregation function, the following is the input of the propagation function
         power_max = node_feat[:, 0]

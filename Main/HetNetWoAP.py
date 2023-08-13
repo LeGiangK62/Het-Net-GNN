@@ -27,6 +27,7 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     # Calculate channel
     CH = 1 / np.sqrt(2) * (np.random.randn(num_samples, 1, num_user)
                            + 1j * np.random.randn(num_samples, 1, num_user))
+    CH = CH ** 2
 
     if radius == 0:
         Hs = abs(CH*np.ones((num_samples, num_ap, num_user)))
@@ -64,6 +65,7 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
         # FSPL_old = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
         FSPL = - (120.9 + 37.6 * np.log10(dist_mat/1000))
         FSPL = 10 ** (FSPL / 10)
+        # FSPL = np.sqrt(FSPL)
         # print(f'FSPL_old:{FSPL_old.sum()}')
         # print(f'FSPL_new:{FSPL.sum()}')
         Hs = abs(CH * FSPL)
@@ -71,12 +73,13 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     adj = adj_matrix(num_user, num_ap)
     noise = var_noise
 
-    return Hs, noise, position, adj, index
+    return Hs/var_noise, 1, position, adj, index
 
 #region Create HeteroData from the wireless system
 def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
     graph_list = []
     num_sam, num_aps, num_users = channel_matrices.shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     for i in range(num_sam):
         x1 = torch.ones(num_users, 1) * p_max
         x2 = torch.zeros(num_users, 1)  # power allocation
@@ -91,20 +94,19 @@ def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
 
         edge_feat_downlink = np.concatenate((y1, y2), 1)
         graph = HeteroData({
-            'ue': {'x': user_feat},
-            'ap': {'x': ap_feat}
+            'ue': {'x': user_feat.to(device)},
+            'ap': {'x': ap_feat.to(device)}
         })
         # Create edge types and building the graph connectivity:
-        graph['ue', 'uplink', 'ap'].edge_attr = torch.tensor(edge_feat_uplink, dtype=torch.float)
-        graph['ap', 'downlink', 'ue'].edge_attr = torch.tensor(edge_feat_downlink, dtype=torch.float)
+        graph['ue', 'uplink', 'ap'].edge_attr = torch.tensor(edge_feat_uplink, dtype=torch.float32).to(device)
+        graph['ap', 'downlink', 'ue'].edge_attr = torch.tensor(edge_feat_downlink, dtype=torch.float32).to(device)
 
         graph['ue', 'uplink', 'ap'].edge_index = torch.tensor(adj_matrix(num_users, num_aps).transpose(),
-                                                              dtype=torch.int64).contiguous()
+                                                              dtype=torch.int64, device=device).contiguous()
         graph['ap', 'downlink', 'ue'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
-                                                                dtype=torch.int64).contiguous()
+                                                                dtype=torch.int64, device=device).contiguous()
         graph_list.append(graph)
     return graph_list
-
 
 def adj_matrix(num_from, num_dest):
     adj = []
@@ -214,21 +216,21 @@ def test(data_loader, noise, is_log=False):
 
 
 if __name__ == '__main__':
-    K = 4  # number of APs
-    N = 5  # number of nodes
-    R = 0  # radius
+    K = 3  # number of APs
+    N = 8  # number of nodes
+    R = 1000  # radius
 
     num_users_features = 2
     num_aps_features = 2
 
-    num_train = 20  # number of training samples
+    num_train = 1  # number of training samples
     num_test = 4  # number of test samples
 
     reg = 1e-2
     pmax = 1
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
-    var_noise = 1
+    var_noise = 10e-11
 
     power_threshold = 2.0
 
@@ -253,19 +255,18 @@ if __name__ == '__main__':
 
     data = train_data[0]
     data = data.to(device)
-    #
     # # model = HGTGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
     # # model = model.to(device)
     #
     model = RGCN(data, num_layers=1)  # input data for the metadata (list of node types and edge types
     model = model.to(device)
     #
-    # # print(data.edge_index_dict)
-    # with torch.no_grad():
-    #     output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-    # print(output)
-
+    # # # print(data.edge_index_dict)
+    # # with torch.no_grad():
+    # #     output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
+    # # print(output)
     #
+    # #
     # # Training and testing
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)

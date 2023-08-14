@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import h5py
 from scipy.spatial import distance_matrix
 
 from torch_geometric.data import HeteroData
@@ -75,6 +76,7 @@ def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
 
     return Hs/var_noise, 1, position, adj, index
 
+
 #region Create HeteroData from the wireless system
 def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
     graph_list = []
@@ -117,6 +119,7 @@ def adj_matrix(num_from, num_dest):
 
 
 #region Training and Testing functions
+# Unsupervised learning
 def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
@@ -213,6 +216,114 @@ def test(data_loader, noise, is_log=False):
       # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
     return total_loss / total_examples
 #endregion
+
+
+# Supervised learning
+def load_data_from_mat(file_path):
+    loaded_data = {}
+    with h5py.File(file_path, 'r') as file:
+        for key in file.keys():
+            loaded_data[key] = file[key][()]
+    return loaded_data
+
+
+def loss_function_sup(output, batch, y_label, noise_matrix, size, is_train=True, is_log=False):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    num_ue, num_ap, batch_size = size
+
+    output = torch.reshape(output, (batch_size, num_ue, -1))
+    ##
+    channel_matrix = batch['ue', 'ap']['edge_attr'][:,0]
+    ##
+    power_max = output[:, :, 0]
+    power = output[:, :, 1] * power_max
+    ap_selection = batch['ue', 'ap']['edge_attr'][:, 1]
+    # power_max = batch['ue']['x'][:, 0]
+    # Get ap_selection from the edge_attr
+    # power = batch['ue']['x'][:, 1]
+    # ap_selection = batch['ue']['x'][:, 2]
+    ##
+    P = torch.reshape(ap_selection, (-1, num_ap, num_ue))
+
+    G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
+    # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
+    # P = torch.zeros_like(G, requires_grad=True).clone()
+    # P[torch.arange(batch_size).unsqueeze(1), ap_selection, torch.arange(num_ue)] = power
+    power = power.unsqueeze(1)
+    P = P * power
+    ##
+    # new_noise = torch.from_numpy(noise_matrix).to(device)
+    new_noise = noise_matrix
+    desired_signal = torch.sum(torch.mul(P, G), dim=1).unsqueeze(-1)
+    G_UE = torch.sum(G, dim=2).unsqueeze(-1)
+    all_signal = torch.matmul(P.permute((0, 2, 1)), G_UE)
+    interference = all_signal - desired_signal + new_noise
+    rate = torch.log(1 + torch.div(desired_signal, interference))
+    sum_rate = torch.mean(torch.sum(rate, 1))
+    mean_power = torch.mean(torch.sum(P.permute((0, 2, 1)), 1))
+    if is_log:
+        print(f'power: {P[0]}')
+        print(f'Sumrate: {sum_rate}')
+        print(f'EE: {sum_rate/mean_power}')
+        # print(f'channel: {G[0]}')
+        # print(f'desired_signal: {desired_signal[0]}')
+        # print(f'interference: {interference[0]}')
+
+    squared_errors = np.square(y_label - power)
+    mean_squared_error = np.mean(squared_errors)
+
+    return mean_squared_error
+
+
+def train_sup(data_loader, noise, y_label):
+    model.train()
+    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    total_examples = total_loss = 0
+    for batch in data_loader:
+        optimizer.zero_grad()
+        batch = batch.to(device_type)
+        #
+        num_ues = batch['ue'].num_nodes
+        num_aps = batch['ap'].num_nodes
+        num_edges = batch['ue', 'ap'].num_edges
+        batch_size = int(num_ues * num_aps / num_edges)
+        num_ues = int(num_ues / batch_size)
+        num_aps = int(num_aps / batch_size)
+        #
+        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+        out = out['ue']
+        tmp_loss = loss_function_sup(out, batch, y_label, noise, (num_ues, num_aps, batch_size), True)
+        tmp_loss.backward()
+        optimizer.step()
+        total_examples += batch_size
+        total_loss += float(tmp_loss) * batch_size
+
+    return total_loss / total_examples
+
+
+def test_sup(data_loader, noise, y_label, is_log=False):
+    model.eval()
+    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    total_examples = total_loss = 0
+    for batch in data_loader:
+        batch = batch.to(device_type)
+        #
+        num_ues = batch['ue'].num_nodes
+        num_aps = batch['ap'].num_nodes
+        num_edges = batch['ue', 'ap'].num_edges
+        batch_size = int(num_ues * num_aps / num_edges)
+        num_ues = int(num_ues / batch_size)
+        num_aps = int(num_aps / batch_size)
+        #
+        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+        out = out['ue']
+        tmp_loss = loss_function_sup(out, batch, y_label, noise, (num_ues, num_aps, batch_size), False)
+        total_examples += batch_size
+        total_loss += float(tmp_loss) * batch_size
+    if is_log:
+      print(out[:3])
+      # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
+    return total_loss / total_examples
 
 
 if __name__ == '__main__':

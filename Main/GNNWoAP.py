@@ -23,9 +23,9 @@ def mlp(channels, batch_norm=True):
 
 
 class EdgeConv(MessagePassing):
-    def __init__(self, node_dim, edge_dim, metadata: Metadata, aggr='mean', **kwargs):
+    def __init__(self, node_dim, edge_dim, metadata: Metadata, aggr='mean', is_first=False, **kwargs):
         super(EdgeConv, self).__init__(aggr=aggr)
-
+        self.layerType = is_first
         self.lin_node = ModuleDict()
         self.lin_edge = ModuleDict()
         self.res_lin = ModuleDict()
@@ -90,7 +90,13 @@ class EdgeConv(MessagePassing):
         # What each neighbor node send to target along the edges
         node_mlp = self.lin_node[src_type]
         edge_mlp = self.lin_edge[edge_type]
-        return node_mlp(x_j)  + edge_mlp(edge_attr)
+        if self.layerType:
+            if src_type == 'ap':
+                return edge_mlp(edge_attr)
+            else:
+                return node_mlp(x_j) + edge_mlp(edge_attr)
+        else:
+            return node_mlp(x_j)  + edge_mlp(edge_attr)
 
     def update(self, aggr_out, node_feat, dst_type):
         # Update node representations with the aggregated messages
@@ -109,9 +115,12 @@ class RGCN(nn.Module):
         super().__init__()
         self.convs = torch.nn.ModuleList()
         self.mlp = mlp([32, 16])
-        for _ in range(num_layers):
+        firstLayer = EdgeConv(node_dim=2, edge_dim=2,
+                            metadata=dataset.metadata(), is_first=True)
+        self.convs.append(firstLayer)
+        for _ in range(num_layers - 1):
             conv = EdgeConv(node_dim=2, edge_dim=2,
-                            metadata=dataset.metadata())
+                            metadata=dataset.metadata(), is_first=False)
             self.convs.append(conv)
 
 

@@ -120,7 +120,7 @@ def adj_matrix(num_from, num_dest):
 
 #region Training and Testing functions
 # Unsupervised learning
-def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False):
+def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
 
@@ -134,8 +134,9 @@ def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     power = power.unsqueeze(1)
     # P = P * power
-    sum_rate = sum_rate_calculation(P * power, P, G, noise_matrix)
-    mean_power = torch.mean(torch.sum(P.permute((0, 2, 1)), 1))
+    sum_rate, rate = sum_rate_calculation(P * power, P, G, noise_matrix)
+    power_all = torch.sum(power, 1).unsqueeze(-1)
+    ee = torch.mean( torch.div(rate, power_all + P_cir))
     if is_log:
         print(f'power: {P[0]}')
         # print(f'channel: {G[0]}')
@@ -143,10 +144,10 @@ def loss_function(output, batch, noise_matrix, size, is_train=True, is_log=False
         # print(f'interference: {interference[0]}')
 
     if is_train:
-        return sum_rate, torch.neg(sum_rate) #/ mean_power
+        return sum_rate, torch.neg(ee) #/ mean_power
     else:
         # return sum_rate / mean_power
-        return torch.neg(sum_rate) #/ mean_power
+        return torch.neg(ee) #/ mean_power
 
 
 def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False):
@@ -163,10 +164,11 @@ def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False)
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     power = power.unsqueeze(1)
     P = P * power
-    return sum_rate_calculation(P, G, noise_matrix)
+    sum_rate, _ = sum_rate_calculation(P, G, noise_matrix)
+    return sum_rate
 
 
-def train(data_loader, noise):
+def train(data_loader, noise, p_cir):
     model.train()
     device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     total_examples = total_loss = sumRate = 0
@@ -183,7 +185,7 @@ def train(data_loader, noise):
         #
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
-        tmp_sumRate, tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), True)
+        tmp_sumRate, tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, True)
         tmp_loss.backward()
         optimizer.step()
         total_examples += batch_size
@@ -193,7 +195,7 @@ def train(data_loader, noise):
     return sumRate / total_examples, total_loss / total_examples
 
 
-def test(data_loader, noise, is_log=False):
+def test(data_loader, noise, p_cir, is_log=False):
     model.eval()
     device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     total_examples = total_loss = 0
@@ -209,12 +211,12 @@ def test(data_loader, noise, is_log=False):
         #
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
-        tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False)
+        tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
     if is_log:
       # print(out[:3])
-      tmp = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False)
+      tmp = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
       return torch.neg(tmp)
       # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
     return total_loss / total_examples
@@ -228,7 +230,7 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
     P_trans = P.permute(0,2,1)
     P_UE = torch.sum(P_trans, dim=2).unsqueeze(-1)  # P_UE[n] = The power n-th UE transmits
     all_received_signal = torch.matmul(G, P_UE)
-    all_signal = torch.matmul(ap_selection.permute(0,2,1), all_received_signal)
+    all_signal = torch.matmul(ap_selection.permute(0, 2, 1), all_received_signal)
     # max_P,_ = torch.max(P_trans, dim=2)
     # max_P = max_P.unsqueeze(-1)
     # print(max_P)
@@ -236,10 +238,10 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
     interference = -desired_signal + all_signal + noise_matrix
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
-    return sum_rate
+    return sum_rate, rate
 
 
-def test(data_loader, noise, is_log=False):
+def test_sup(data_loader, noise, p_cir, is_log=False):
     model.eval()
     device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     total_examples = total_loss = 0
@@ -255,7 +257,7 @@ def test(data_loader, noise, is_log=False):
         #
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
-        tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False)
+        tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
     if is_log:
@@ -394,7 +396,8 @@ if __name__ == '__main__':
     # var_noise = 1
 
 
-    power_threshold = 2.0
+    power_threshold = 200
+    power_circuit = 1.0
 
     X_train, noise_train, pos_train, adj_train, index_train = generate_channels(K, N, num_train, var_noise, R)
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels(K_test, N_test, num_test, var_noise, R)
@@ -446,8 +449,8 @@ if __name__ == '__main__':
     testing_acc = []
     sumrate = []
     for epoch in range(1, 50):
-        train_sumrate, loss = train(train_loader, noise_train)
-        test_acc = test(test_loader, noise_test)
+        train_sumrate, loss = train(train_loader, noise_train, power_circuit)
+        test_acc = test(test_loader, noise_test, power_circuit)
         training_loss.append(loss)
         testing_acc.append(test_acc)
         sumrate.append(float(train_sumrate))

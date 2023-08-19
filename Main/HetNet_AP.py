@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 
 from WSN_GNN import generate_channels_wsn
 from hgt_conv import HGTGNN
-from GNNWoAP import RGCN
+from GNN_AP import RGCN
 
 
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
@@ -90,7 +90,8 @@ def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
         user_feat = torch.cat((x1, x2), 1)  # features of user_node
         ap_feat = torch.ones(num_aps, num_aps_features)  # features of user_node
         y1 = channel_matrices[i, :, :].reshape(-1, 1)
-        y2 = ap_selection_matrix[i, :, :].reshape(-1, 1)
+        # y2 = ap_selection_matrix[i, :, :].reshape(-1, 1)
+        y2 = torch.ones(num_users * num_aps, 1)
 
         edge_feat_uplink = np.concatenate((y1, y2), 1)
 
@@ -120,7 +121,7 @@ def adj_matrix(num_from, num_dest):
 
 #region Training and Testing functions
 # Unsupervised learning
-def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, is_log=False):
+def loss_function(output, batch, noise_matrix, size, p_cir, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
 
@@ -130,13 +131,28 @@ def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, i
     power = output[:, :, 1] * power_max
     ap_selection = batch['ue', 'ap']['edge_attr'][:, 1]
     P = torch.reshape(ap_selection, (-1, num_ap, num_ue))
+    P = torch.softmax(P, dim=1)
+    # P = torch.round(P)
+    max_indices = torch.argmax(P, dim=1)
+
+    # Create a new tensor where the maximum value is set to 1 and the rest to 0
+    result = torch.zeros_like(P)
+    result.scatter_(1, max_indices.unsqueeze(1), 1)
+    P = result
 
     G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
     power = power.unsqueeze(1)
     # P = P * power
     sum_rate, rate = sum_rate_calculation(P * power, P, G, noise_matrix)
     power_all = torch.sum(power, 1).unsqueeze(-1)
-    ee = torch.mean( torch.div(rate, power_all + P_cir))
+
+    # ee = torch.mean( torch.div(rate, power_all + p_cir)) # Personal Energy efficiency
+    ee = torch.mean( torch.div(rate, power_all + p_cir)) # Option 1
+    sum_rate_batch = torch.sum(rate, dim=1)
+    sum_power_batch = torch.sum(power_all + p_cir, dim=1)
+    ee_batch = torch.div(sum_rate_batch, sum_power_batch)
+    ee_mean = torch.mean(ee_batch)
+
     if is_log:
         print(f'power: {P[0]}')
         # print(f'channel: {G[0]}')
@@ -144,10 +160,15 @@ def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, i
         # print(f'interference: {interference[0]}')
 
     if is_train:
-        return sum_rate, torch.neg(ee) #/ mean_power
+        # return sum_rate, torch.neg(sum_rate), torch.mean(sum_power_batch)
+        return sum_rate, torch.neg(ee_mean), torch.mean(sum_power_batch)
+        # return sum_rate, torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
+
     else:
         # return sum_rate / mean_power
-        return torch.neg(ee) #/ mean_power
+        return torch.neg(ee_mean)
+        #  return torch.neg(sum_rate)
+        # return torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
 
 
 def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False):
@@ -171,7 +192,7 @@ def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False)
 def train(data_loader, noise, p_cir):
     model.train()
     device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_examples = total_loss = sumRate = 0
+    total_examples = total_loss = sumRate = sumPower = 0
     for batch in data_loader:
         optimizer.zero_grad()
         batch = batch.to(device_type)
@@ -183,16 +204,17 @@ def train(data_loader, noise, p_cir):
         num_ues = int(num_ues / batch_size)
         num_aps = int(num_aps / batch_size)
         #
-        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+        out, edge = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
-        tmp_sumRate, tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, True)
+        tmp_sumRate, tmp_loss, tmp_sumPower = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, True)
         tmp_loss.backward()
         optimizer.step()
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
         sumRate += float(tmp_sumRate) * batch_size
+        sumPower += float(tmp_sumPower) * batch_size
 
-    return sumRate / total_examples, total_loss / total_examples
+    return sumRate / total_examples, total_loss / total_examples, sumPower / total_examples
 
 
 def test(data_loader, noise, p_cir, is_log=False):
@@ -209,15 +231,17 @@ def test(data_loader, noise, p_cir, is_log=False):
         num_ues = int(num_ues / batch_size)
         num_aps = int(num_aps / batch_size)
         #
-        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
+        out, edge = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
         tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
+
     if is_log:
       # print(out[:3])
-      tmp = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
-      return torch.neg(tmp)
+      tensor = (edge['ue','uplink','ap'])
+      # print(tensor)
+      print(f'The number of activated link: {(tensor[:,1] == 0).sum().item()}/{len(tensor[:,1])}' )
       # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
     return total_loss / total_examples
 
@@ -230,7 +254,7 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
     P_trans = P.permute(0,2,1)
     P_UE = torch.sum(P_trans, dim=2).unsqueeze(-1)  # P_UE[n] = The power n-th UE transmits
     all_received_signal = torch.matmul(G, P_UE)
-    all_signal = torch.matmul(ap_selection.permute(0, 2, 1), all_received_signal)
+    all_signal = torch.matmul(ap_selection.permute(0,2,1), all_received_signal)
     # max_P,_ = torch.max(P_trans, dim=2)
     # max_P = max_P.unsqueeze(-1)
     # print(max_P)
@@ -376,8 +400,8 @@ def test_sup(data_loader, noise, y_label, is_log=False):
 
 
 if __name__ == '__main__':
-    K = 3  # number of APs
-    N = 8  # number of nodes
+    K = 2  # number of APs
+    N = 3  # number of nodes
     R = 1000  # radius
     K_test = K
     N_test = N
@@ -385,7 +409,7 @@ if __name__ == '__main__':
     num_users_features = 2
     num_aps_features = 2
 
-    num_train = 20  # number of training samples
+    num_train = 1  # number of training samples
     num_test = 4  # number of test samples
 
     reg = 1e-2
@@ -443,19 +467,20 @@ if __name__ == '__main__':
     #
     # #
     # # Training and testing
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.00001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     training_loss = []
     testing_acc = []
     sumrate = []
-    for epoch in range(1, 50):
-        train_sumrate, loss = train(train_loader, noise_train, power_circuit)
+    for epoch in range(1, 1000):
+        train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit)
         test_acc = test(test_loader, noise_test, power_circuit)
         training_loss.append(loss)
         testing_acc.append(test_acc)
         sumrate.append(float(train_sumrate))
-        if (epoch % 5 == 1):
+        if (epoch % 100 == 1):
             # tmp = test(test_loader, noise_test, True)
+            # tmp = test(test_loader, noise_test, power_circuit, True)
             # sumrate.append(float(tmp))
             print(
-                f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Train Sum Rate: {train_sumrate:.4f}, Test Reward: {test_acc:.4f}')
+                f'Epoch: {epoch:03d}, Train Loss: {loss:.6f}, Train Sum Rate: {train_sumrate:.4f}, Train Sum Power: {train_sumPower:.0f}, Test Reward: {test_acc:.6f}')

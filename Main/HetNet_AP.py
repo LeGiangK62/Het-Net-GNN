@@ -497,7 +497,7 @@ def main_train(args):
         training_loss.append(loss)
         testing_acc.append(test_acc)
         sumrate.append(float(train_sumrate))
-        if (epoch % 100 == 1):
+        if (epoch % args.per_epoch == 1):
             # tmp = test(test_loader, noise_test, True)
             # tmp = test(test_loader, noise_test, power_circuit, True)
             # sumrate.append(float(tmp))

@@ -12,6 +12,6 @@ if __name__ == "__main__":
 
     training_loss, testing_acc = main_train(args)
 
-    print(training_loss)
+    # print(training_loss)
 
 

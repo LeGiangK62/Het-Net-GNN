@@ -453,6 +453,8 @@ def main_train(args):
     N = args.user_num  # number of nodes
     R = args.radius  # radius
 
+    isGenData = args.generate_data
+
     n0 = args.noise
 
     power_threshold = args.poweru_max
@@ -461,11 +463,16 @@ def main_train(args):
     K_test = K
     N_test = N
 
+    networkMode = args.model_mode
+
+    if networkMode != 'withAP':
+        raise RuntimeError("Not yest Defince this mode")
+
     num_train = args.train_num  # number of training samples
     num_test = args.test_num  # number of test samples
 
     train_data, test_data, noise_train, noise_test = generate_data_loaders(num_train, num_test, K, N,
-                                                                           n0, R, power_threshold, True)
+                                                                           n0, R, power_threshold, isGenData)
 
     batchSize = 2
 

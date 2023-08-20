@@ -474,7 +474,7 @@ def main_train(args):
     train_data, test_data, noise_train, noise_test = generate_data_loaders(num_train, num_test, K, N,
                                                                            n0, R, power_threshold, isGenData)
 
-    batchSize = 2
+    batchSize = args.batch_size
 
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=1)

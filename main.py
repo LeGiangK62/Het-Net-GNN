@@ -3,7 +3,7 @@ import os
 import time
 
 from Utilities.setup import *
-from Main.HetNet_AP import *
+from Main.HetNet_AP_compact import *
 
 if __name__ == "__main__":
     total_start = time.time()

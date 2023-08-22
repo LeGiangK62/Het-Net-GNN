@@ -14,7 +14,6 @@ from torch_geometric.nn.inits import reset
 from torch_geometric.utils import softmax
 
 
-
 def mlp(channels, batch_norm=True):
     return Seq(*[
         Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
@@ -25,47 +24,59 @@ def mlp(channels, batch_norm=True):
 class EdgeConv(MessagePassing):
     def __init__(self, node_dim, edge_dim, metadata: Metadata, aggr='mean', is_first=False, **kwargs):
         super(EdgeConv, self).__init__(aggr=aggr)
-        self.layerType = is_first
-        self.lin_node = ModuleDict()
+        self.is_first = is_first
+
+        self.lin_node_neigh = ModuleDict()
+        self.lin_node_neigh_compact = ModuleDict()
         self.lin_edge = ModuleDict()
-        self.res_lin = ModuleDict()
+        self.lin_edge_compact = ModuleDict()
+        self.lin_node_messg = ModuleDict()
 
         for node_type in metadata[0]:
-            self.lin_node[node_type] = mlp([node_dim, 32])
-            self.res_lin[node_type] = nn.Linear(node_dim, 32)
+            self.lin_node_neigh[node_type] = mlp([node_dim, 32])
+            # self.lin_node_neigh[node_type] = nn.Linear(node_dim, 32)
+
+            self.lin_node_neigh_compact[node_type] = mlp([node_dim - 1, 32])
+
+            # self.lin_node_messg[node_type] = nn.Linear(node_dim, 32)
+            self.lin_node_messg[node_type] = mlp([node_dim, 32])
 
         for edge_type in metadata[1]:
+            # self.lin_edge['__'.join(edge_type)] = nn.Linear(edge_dim - 1, 32) # NOT PASS THE AP
+            #                                                                   # SELECTION
+
             self.lin_edge['__'.join(edge_type)] = mlp([edge_dim, 32])
+            self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 32])
 
         self.power_mlp = mlp([32 + node_dim, 16])
         self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
         self.ap_mlp = mlp([32 + node_dim, 16])
         self.ap_mlp = Seq(*[self.ap_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
-
         self.reset_parameters()
 
     def reset_parameters(self):
         super().reset_parameters()
-        reset(self.lin_node)
-        reset(self.lin_edge)
-        reset(self.res_lin)
         reset(self.power_mlp)
+        reset(self.lin_edge)
+        reset(self.lin_edge_compact)
         reset(self.ap_mlp)
+        reset(self.lin_node_neigh)
+        reset(self.lin_node_neigh_compact)
+        reset(self.lin_node_messg)
 
     def forward(
-        self,
-        x_dict: Dict[NodeType, Tensor],
-        edge_index_dict: Union[Dict[EdgeType, Tensor],
-                               Dict[EdgeType, SparseTensor]],  # Support both.
-        edge_attr_dict: Union[Dict[EdgeType, Tensor],
-                              Dict[EdgeType, SparseTensor]]
+            self,
+            x_dict: Dict[NodeType, Tensor],
+            edge_index_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]],  # Support both.
+            edge_attr_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]]
     ) -> Dict[NodeType, Optional[Tensor]]:
         # How to get the edge attributes from only the index?
         lin_node_dict, lin_edge_dict, out_dict = {}, {}, {}
         # Iterate over node-types to initialize the output dictionary
         for node_type, node_ft in x_dict.items():
-            lin_node_dict[node_type] = self.lin_node[node_type](node_ft)
             out_dict[node_type] = []
 
         # Iterate over edge-types:
@@ -88,24 +99,48 @@ class EdgeConv(MessagePassing):
     def message(self, x_j: Tensor, src_type, edge_type, edge_attr) -> Tensor:
         # This function is called when we use self.propagate - Used the given parameters too.
         # What each neighbor node send to target along the edges
-        node_mlp = self.lin_node[src_type]
+
+        node_mlp = self.lin_node_neigh[src_type]
         edge_mlp = self.lin_edge[edge_type]
-        if self.layerType:
-            if src_type == 'ap':
-                return edge_mlp(edge_attr)
+        node_ft = x_j
+        edge_ft = edge_attr
+
+        if self.is_first:
+            # different first layer
+            node_mlp = self.lin_node_neigh_compact[src_type]
+            edge_mlp = self.lin_edge_compact[edge_type]
+            node_ft = x_j[:, :1]
+            edge_ft = edge_attr[:, :1]
+
+        if self.is_first:
+            # the first layer
+            if src_type == 'ue':
+                return node_mlp(node_ft) + edge_mlp(edge_ft)
             else:
-                return node_mlp(x_j) + edge_mlp(edge_attr)
+                return edge_mlp(edge_ft)  # torch.zeros(x_j.shape[0], 32) # Check size msg
         else:
-            return node_mlp(x_j)  + edge_mlp(edge_attr)
+            if src_type == 'ue':
+                return edge_mlp(edge_ft)
+            else:
+                return node_mlp(node_ft) + edge_mlp(edge_ft)
 
     def update(self, aggr_out, node_feat, dst_type):
         # Update node representations with the aggregated messages
         # aggr_out  = output of aggregation function, the following is the input of the propagation function
         power_max = node_feat[:, 0]
-        node_mlp = self.lin_node[dst_type]
+        node_mlp = self.lin_node_messg[dst_type]
+
         res = node_mlp(node_feat)
+
         tmp = torch.cat([node_feat, aggr_out + res], dim=1)
         power = self.power_mlp(tmp)
+
+        # new option
+        if not (self.is_first):
+            # not 1st layer
+            if dst_type == 'ap':
+                # AP keep its node_ft
+                return node_feat
         return torch.cat([power_max.unsqueeze(-1), power], dim=1)
 
 
@@ -116,13 +151,12 @@ class RGCN(nn.Module):
         self.convs = torch.nn.ModuleList()
         self.mlp = mlp([32, 16])
         firstLayer = EdgeConv(node_dim=2, edge_dim=2,
-                            metadata=dataset.metadata(), is_first=True)
+                              metadata=dataset.metadata(), aggr='mean', is_first=True)
         self.convs.append(firstLayer)
         for _ in range(num_layers - 1):
             conv = EdgeConv(node_dim=2, edge_dim=2,
-                            metadata=dataset.metadata(), is_first=False)
+                            metadata=dataset.metadata(), aggr='mean', is_first=False)
             self.convs.append(conv)
-
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
         for conv in self.convs:

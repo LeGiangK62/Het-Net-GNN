@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import h5py
 from scipy.spatial import distance_matrix
+import scipy.io
 
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
@@ -119,8 +120,7 @@ def adj_matrix(num_from, num_dest):
 
 
 #region Training and Testing functions
-# Unsupervised learning
-def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, is_log=False):
+def loss_function(output, batch, noise_matrix, size, p_cir, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
 
@@ -136,7 +136,14 @@ def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, i
     # P = P * power
     sum_rate, rate = sum_rate_calculation(P * power, P, G, noise_matrix)
     power_all = torch.sum(power, 1).unsqueeze(-1)
-    ee = torch.mean( torch.div(rate, power_all + P_cir))
+
+    # ee = torch.mean( torch.div(rate, power_all + p_cir)) # Personal Energy efficiency
+    ee = torch.mean( torch.div(rate, power_all + p_cir)) # Option 1
+    sum_rate_batch = torch.sum(rate, dim=1)
+    sum_power_batch = torch.sum(power_all + p_cir, dim=1)
+    ee_batch = torch.div(sum_rate_batch, sum_power_batch)
+    ee_mean = torch.mean(ee_batch)
+
     if is_log:
         print(f'power: {P[0]}')
         # print(f'channel: {G[0]}')
@@ -144,10 +151,15 @@ def loss_function(output, batch, noise_matrix, size, P_cir=1.0, is_train=True, i
         # print(f'interference: {interference[0]}')
 
     if is_train:
-        return sum_rate, torch.neg(ee) #/ mean_power
+        return sum_rate, torch.neg(ee_mean), torch.mean(sum_power_batch)
+        # return sum_rate, torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
+
     else:
         # return sum_rate / mean_power
-        return torch.neg(ee) #/ mean_power
+        return torch.neg(ee_mean)
+        # return torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
+
+
 
 
 def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False):
@@ -168,10 +180,11 @@ def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False)
     return sum_rate
 
 
+
 def train(data_loader, noise, p_cir):
     model.train()
     device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_examples = total_loss = sumRate = 0
+    total_examples = total_loss = sumRate = sumPower = 0
     for batch in data_loader:
         optimizer.zero_grad()
         batch = batch.to(device_type)
@@ -185,14 +198,15 @@ def train(data_loader, noise, p_cir):
         #
         out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
         out = out['ue']
-        tmp_sumRate, tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, True)
+        tmp_sumRate, tmp_loss, tmp_sumPower = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, True)
         tmp_loss.backward()
         optimizer.step()
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
         sumRate += float(tmp_sumRate) * batch_size
+        sumPower += float(tmp_sumPower) * batch_size
 
-    return sumRate / total_examples, total_loss / total_examples
+    return sumRate / total_examples, total_loss / total_examples, sumPower / total_examples
 
 
 def test(data_loader, noise, p_cir, is_log=False):
@@ -214,9 +228,10 @@ def test(data_loader, noise, p_cir, is_log=False):
         tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
         total_examples += batch_size
         total_loss += float(tmp_loss) * batch_size
+
     if is_log:
       # print(out[:3])
-      tmp = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
+      tmp = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False)
       return torch.neg(tmp)
       # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
     return total_loss / total_examples
@@ -230,7 +245,7 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
     P_trans = P.permute(0,2,1)
     P_UE = torch.sum(P_trans, dim=2).unsqueeze(-1)  # P_UE[n] = The power n-th UE transmits
     all_received_signal = torch.matmul(G, P_UE)
-    all_signal = torch.matmul(ap_selection.permute(0, 2, 1), all_received_signal)
+    all_signal = torch.matmul(ap_selection.permute(0,2,1), all_received_signal)
     # max_P,_ = torch.max(P_trans, dim=2)
     # max_P = max_P.unsqueeze(-1)
     # print(max_P)
@@ -241,39 +256,32 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
     return sum_rate, rate
 
 
-def test_sup(data_loader, noise, p_cir, is_log=False):
-    model.eval()
-    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_examples = total_loss = 0
-    for batch in data_loader:
-        batch = batch.to(device_type)
-        #
-        num_ues = batch['ue'].num_nodes
-        num_aps = batch['ap'].num_nodes
-        num_edges = batch['ue', 'ap'].num_edges
-        batch_size = int(num_ues * num_aps / num_edges)
-        num_ues = int(num_ues / batch_size)
-        num_aps = int(num_aps / batch_size)
-        #
-        out = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
-        out = out['ue']
-        tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), p_cir, False)
-        total_examples += batch_size
-        total_loss += float(tmp_loss) * batch_size
-    if is_log:
-      print(out[:3])
-      # tmp_loss = loss_function(out, batch, noise, (num_ues, num_aps, batch_size), False, True)
-    return total_loss / total_examples
+# def sum_rate_calculation(power_matrix, channel_matrix,  noise_matrix):
+#     P = power_matrix
+#     G = channel_matrix
+#     new_noise = noise_matrix
+#     desired_signal = torch.sum(torch.mul(P, G), dim=1).unsqueeze(-1)
+#     G_UE = torch.sum(G, dim=2).unsqueeze(-1)
+#     all_signal = torch.matmul(P.permute((0, 2, 1)), G_UE)
+#     interference = all_signal - desired_signal + new_noise
+#     rate = torch.log(1 + torch.div(desired_signal, interference))
+#     return torch.mean(torch.sum(rate, 1))
 #endregion
 
 
 # Supervised learning
 def load_data_from_mat(file_path):
-    loaded_data = {}
-    with h5py.File(file_path, 'r') as file:
-        for key in file.keys():
-            loaded_data[key] = file[key][()]
-    return loaded_data
+    matLoader = scipy.io.loadmat(file_path)
+    channelAll = matLoader['channel_python'].transpose(0, 2, 1)
+    apSelectionAll = matLoader['mu_python'].transpose(0, 2, 1)
+    powerAll = matLoader['power_python']
+    EE_All = matLoader['EE_python']
+    B = matLoader['B'][0][0]
+    n0 = matLoader['n0'][0][0]
+    num_ap = channelAll.shape[1]
+    num_ue = channelAll.shape[2]
+    num_sam = channelAll.shape[0]
+    return channelAll, apSelectionAll, powerAll, EE_All, B, n0, (num_sam, num_ap, num_ue)
 
 
 def loss_function_sup(output, batch, y_label, noise_matrix, size, is_train=True, is_log=False):
@@ -376,28 +384,33 @@ def test_sup(data_loader, noise, y_label, is_log=False):
 
 
 if __name__ == '__main__':
+    isGenData = False
+
     K = 3  # number of APs
-    N = 8  # number of nodes
-    R = 1000  # radius
+    N = 10  # number of nodes
+    R = 300  # radius
+
     K_test = K
     N_test = N
 
     num_users_features = 2
     num_aps_features = 2
 
-    num_train = 20  # number of training samples
-    num_test = 4  # number of test samples
+    num_train = 10  # number of training samples
+    num_test = 5  # number of test samples
 
     reg = 1e-2
     pmax = 1
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
-    var_noise = 10e-12
+    var_noise = 7.1659e-13
+    # var_noise = 7.165929069962973e-13
+    # var_noise = 10e-12
     # var_noise = 1
-
+    #
 
     power_threshold = 200
-    power_circuit = 1.0
+    power_circuit = 200
 
     X_train, noise_train, pos_train, adj_train, index_train = generate_channels(K, N, num_train, var_noise, R)
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels(K_test, N_test, num_test, var_noise, R)
@@ -416,46 +429,63 @@ if __name__ == '__main__':
         for col_idx in range(theta_test.shape[2]):
             row_idx = np.random.choice(theta_test.shape[1])
             theta_test[sample_idx, row_idx, col_idx] = 1
+
+    # Load data
+    mat_file = 'no_time_allo_train_18Aug.mat'
+
+    channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file)
+
+    shuffled_indices = np.arange(num_s)
+    np.random.shuffle(shuffled_indices)
+
+    channel_load = channel_load[shuffled_indices]
+    theta_load = theta_load[shuffled_indices]
+    power = power[shuffled_indices]
+
+    if not (isGenData):
+        X_train, theta_train, noise_train = channel_load[0:num_train] ** 2 / noise, theta_load[0:num_train], 1
+        X_test, theta_test, noise_test = channel_load[num_train:(num_train + num_test)] ** 2 / noise, theta_load[
+                                                                                                      num_train:(
+                                                                                                                  num_train + num_test)], 1
+
     # Maybe need normalization here
     train_data = convert_to_hetero_data(X_train, power_threshold, theta_train)
     test_data = convert_to_hetero_data(X_test, power_threshold, theta_test)
 
-    batchSize = 2
+    batchSize = 256
 
-    train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=1)
-    test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=1)
+    train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=0)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
     data = train_data[0]
     data = data.to(device)
-    # # model = HGTGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
-    # # model = model.to(device)
-    #
-    model = RGCN(data, num_layers=1)  # input data for the metadata (list of node types and edge types
+
+    # model = HGTGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
+    # model = model.to(device)
+
+    model = RGCN(data, num_layers=3)  # input data for the metadata (list of node types and edge types)
     model = model.to(device)
-    #
+
     # # # print(data.edge_index_dict)
-    # # with torch.no_grad():
-    # #     output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-    # # print(output)
-    #
-    # #
-    # # Training and testing
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.00001)
+    # with torch.no_grad():
+    #     output = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
+    # print(output)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     training_loss = []
     testing_acc = []
     sumrate = []
-    for epoch in range(1, 50):
-        train_sumrate, loss = train(train_loader, noise_train, power_circuit)
+    for epoch in range(1, 1000):  # 1 hour to run => maybe change learning rate
+        train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit)
         test_acc = test(test_loader, noise_test, power_circuit)
         training_loss.append(loss)
         testing_acc.append(test_acc)
         sumrate.append(float(train_sumrate))
-        if (epoch % 5 == 1):
+        if (epoch % 100 == 1):
             # tmp = test(test_loader, noise_test, True)
             # sumrate.append(float(tmp))
             print(
-                f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Train Sum Rate: {train_sumrate:.4f}, Test Reward: {test_acc:.4f}')
+                f'Epoch: {epoch:03d}, Train Loss: {loss:.5f}, Train Sum Rate: {train_sumrate:.4f}, Train Sum Power: {train_sumPower:.0f}, Test Reward: {test_acc:.5f}')

@@ -1,16 +1,12 @@
 import torch
 import numpy as np
-import h5py
 from scipy.spatial import distance_matrix
-import scipy.io
 
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
 
-
-from WSN_GNN import generate_channels_wsn
-from hgt_conv import HGTGNN
 from GNNWoAP import RGCN
+from Utilities import load_file
 
 
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
@@ -270,18 +266,18 @@ def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matr
 
 
 # Supervised learning
-def load_data_from_mat(file_path):
-    matLoader = scipy.io.loadmat(file_path)
-    channelAll = matLoader['channel_python'].transpose(0, 2, 1)
-    apSelectionAll = matLoader['mu_python'].transpose(0, 2, 1)
-    powerAll = matLoader['power_python']
-    EE_All = matLoader['EE_python']
-    B = matLoader['B'][0][0]
-    n0 = matLoader['n0'][0][0]
-    num_ap = channelAll.shape[1]
-    num_ue = channelAll.shape[2]
-    num_sam = channelAll.shape[0]
-    return channelAll, apSelectionAll, powerAll, EE_All, B, n0, (num_sam, num_ap, num_ue)
+# def load_data_from_mat(file_path):
+#     matLoader = scipy.io.loadmat(file_path)
+#     channelAll = matLoader['channel_python'].transpose(0, 2, 1)
+#     apSelectionAll = matLoader['mu_python'].transpose(0, 2, 1)
+#     powerAll = matLoader['power_python']
+#     EE_All = matLoader['EE_python']
+#     B = matLoader['B'][0][0]
+#     n0 = matLoader['n0'][0][0]
+#     num_ap = channelAll.shape[1]
+#     num_ue = channelAll.shape[2]
+#     num_sam = channelAll.shape[0]
+#     return channelAll, apSelectionAll, powerAll, EE_All, B, n0, (num_sam, num_ap, num_ue)
 
 
 def loss_function_sup(output, batch, y_label, noise_matrix, size, is_train=True, is_log=False):
@@ -433,7 +429,7 @@ if __name__ == '__main__':
     # Load data
     mat_file = 'no_time_allo_train_18Aug.mat'
 
-    channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file)
+    channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_file.load_data_from_mat(mat_file)
 
     shuffled_indices = np.arange(num_s)
     np.random.shuffle(shuffled_indices)

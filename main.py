@@ -1,8 +1,6 @@
-import argparse
-import os
 import time
 
-from Utilities.setup import *
+from Main.Utilities.setup import *
 from Main.HetNet_AP_compact import *
 
 if __name__ == "__main__":

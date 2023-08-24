@@ -9,6 +9,7 @@ from torch_geometric.loader import DataLoader
 # from WSN_GNN import generate_channels_wsn
 # from hgt_conv import HGTGNN
 from .GNN_AP import RGCN
+from .Utilities.setup import get_arguments
 
 
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
@@ -174,7 +175,42 @@ def loss_function(output, batch, noise_matrix, size, p_cir, is_train=True, is_lo
         #  return torch.neg(sum_rate)
         # return torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
 
+def loss_function_fixed(power_out, edge_dict, noise_matrix, size, p_cir, is_train=True, is_log=False):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    num_ue, num_ap, batch_size = size
 
+    power_out = torch.reshape(power_out, (batch_size, num_ue, -1))
+    channel_matrix = edge_dict['ue', 'uplink', 'ap'][:, 0]
+    power_max = power_out[:, :, 0]
+    power = power_out[:, :, 1] * power_max
+    ap_selection = edge_dict['ue', 'uplink', 'ap'][:, 1]
+    P = torch.reshape(ap_selection, (-1, num_ap, num_ue))
+
+    G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
+    power = power.unsqueeze(1)
+    # P = P * power
+    sum_rate, rate = sum_rate_calculation(P * power, P, G, noise_matrix)
+    power_all = torch.sum(power, 1).unsqueeze(-1)
+
+    # ee = torch.mean( torch.div(rate, power_all + p_cir)) # Personal Energy efficiency
+    ee = torch.mean(torch.div(rate, power_all + p_cir))  # Option 1
+    sum_rate_batch = torch.sum(rate, dim=1)
+    sum_power_batch = torch.sum(power_all + p_cir, dim=1)
+    ee_batch = torch.div(sum_rate_batch, sum_power_batch)
+    ee_mean = torch.mean(ee_batch)
+
+    if is_log:
+        print(f'power: {P[0]}')
+    if is_train:
+        # return sum_rate, torch.neg(sum_rate), torch.mean(sum_power_batch)
+        return sum_rate, torch.neg(ee_mean), torch.mean(sum_power_batch)
+        # return sum_rate, torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
+
+    else:
+        # return sum_rate / mean_power
+        return torch.neg(ee_mean)
+        #  return torch.neg(sum_rate)
+        # return torch.neg(torch.mean(sum_rate_batch)) #/ mean_power
 def get_sum_rate(output, batch, noise_matrix, size, is_train=True, is_log=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     num_ue, num_ap, batch_size = size
@@ -327,6 +363,8 @@ def generate_data_loaders(num_train, num_test, num_ap, num_ue, noise, radius, p_
 
 def main_train(args):
     # Get arguments
+    args = get_arguments()
+
     K = args.ap_num  # number of APs
     N = args.user_num  # number of nodes
     R = args.radius  # radius
@@ -344,7 +382,7 @@ def main_train(args):
     networkMode = args.model_mode
 
     if networkMode != 'withAP':
-        raise RuntimeError("Not yest Defince this mode")
+        raise RuntimeError("Not yet Define this mode")
 
     num_train = args.train_num  # number of training samples
     num_test = args.test_num  # number of test samples

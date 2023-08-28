@@ -138,7 +138,7 @@ def mlp(channels, batch_norm=True):
 #         return x_dict
 
 
-class Ue2Ap(MessagePassing):
+class Ue2Ap_old(MessagePassing):
     def __init__(self, node_dim, edge_dim, metadata: Metadata, aggr='mean', **kwargs):
         super(Ue2Ap, self).__init__(aggr=aggr)
         self.lin_node_msg_compact = ModuleDict()
@@ -146,16 +146,21 @@ class Ue2Ap(MessagePassing):
         self.lin_node_upd = ModuleDict()
         self.power_mlp = ModuleDict()
 
+
         for node_type in metadata[0]:
             self.lin_node_msg_compact[node_type] = mlp([1, 16, 32])
-            self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, 32])
-            # self.lin_node_upd[node_type] = mlp([1, 16, 32])
+            # self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, 32])
+            self.lin_node_upd[node_type] = mlp([1, 16, 32])
+
             # self.power_mlp[node_type] = mlp([32 + node_dim[node_type], 16])
             self.power_mlp[node_type] = mlp([32, 16])
             self.power_mlp[node_type] = Seq(*[self.power_mlp[node_type], Seq(Lin(16, 1, bias=True), Sigmoid())])
 
         for edge_type in metadata[1]:
             self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+
+        # self.power_mlp = mlp([32 + 3 - 2, 16])
+        # self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
     def reset_parameters(self):
         super().reset_parameters()
@@ -173,6 +178,9 @@ class Ue2Ap(MessagePassing):
             Dict[EdgeType, SparseTensor]]
     ) -> tuple[Dict[NodeType, Optional[Tensor]], Union[Dict[EdgeType, Tensor], Dict[EdgeType, SparseTensor]]]:
         out_node_dict = {}
+        # # Iterate over node-types to initialize the output dictionary
+        # for node_type, node_ft in x_dict.items():
+        #     out_node_dict[node_type] = []
 
         # Iterate over edge-types to update node_features:
         for edge_type, edge_index in edge_index_dict.items():
@@ -187,36 +195,133 @@ class Ue2Ap(MessagePassing):
             out_node_dict[dst_type] = out
         return out_node_dict, edge_attr_dict
 
-    def message(self, x_j: Tensor, src_type, edge_type, edge_attr) -> Tensor:
+    def message(self, x_j: Tensor, node_feat: Tensor, src_type, edge_type, edge_attr) -> Tensor:
         # APs only send the edge_feat (only the channel) to UEs
         # Ues send the node_ft (only the p_max) and the edge_ft (only the channel)
+
+        # ## New approach
+        # # Concat ue_ft, ap_feat, and edge
+        # dst_feat = node_feat.repeat(x_j.shape[0]//node_feat.shape[0], 1)
+        # tmp_msg = torch.cat([x_j, edge_attr, dst_feat], dim = 1)
+        # mesage_mlp = self.msg_mlp(tmp_msg)
+
+        # return mesage_mlp
 
         node_mlp = self.lin_node_msg_compact[src_type]
         edge_mlp = self.lin_edge_compact[edge_type]
         node_ft = x_j[:, :1]
         edge_ft = edge_attr[:, :1]
 
-        ap_selection = edge_attr[:, 1].unsqueeze(-1)
-        edge_ft = edge_ft * (1 - ap_selection)
-        if src_type == 'ue':
-            return node_mlp(node_ft) + edge_mlp(edge_ft)
-        else:
-            return edge_mlp(edge_ft)
+        # ap_selection = edge_attr[:, 1].unsqueeze(-1)
+        # edge_ft = edge_ft * (ap_selection)
+
+        # if src_type == 'ue':
+        #     return node_mlp(node_ft) + edge_mlp(edge_ft)
+        # else:
+        #     return edge_mlp(edge_ft)
+
+        return edge_mlp(edge_ft)
+
 
     def update(self, aggr_out, node_feat, dst_type):
         power_max = node_feat[:, 0]
         node_mlp = self.lin_node_upd[dst_type]
         final_mlp = self.power_mlp[dst_type]
-        res = node_mlp(node_feat)
+        res = node_mlp(node_feat[:,:1])
+
         # tmp = torch.cat([node_feat, aggr_out + res], dim=1)
         # power = final_mlp(tmp)
-        power = final_mlp(aggr_out + res)
-        # return torch.cat([node_feat[:, :-1], power], dim=1)
-        if dst_type == 'ue':
-            return torch.cat([power_max.unsqueeze(-1), power], dim=1)
-        else:
-            return power
 
+        power = final_mlp(aggr_out + res)
+
+        return torch.cat([node_feat[:, :-1], power], dim=1)
+
+        # if dst_type == 'ue':
+        #   return torch.cat([power_max.unsqueeze(-1), power], dim=1)
+        # else:
+        #   return power
+
+class Ue2Ap(MessagePassing):
+    def __init__(self, node_dim, edge_dim, out_node_dim, metadata: Metadata, aggr='mean', **kwargs):
+        super(Ue2Ap, self).__init__(aggr=aggr)
+        self.lin_node_msg_compact = ModuleDict()
+        self.lin_edge_compact = ModuleDict()
+        self.lin_node_upd = ModuleDict()
+        self.power_mlp = ModuleDict()
+
+        for node_type in metadata[0]:
+            # self.lin_node_msg_compact[node_type] = mlp([node_dim[node_type], 16, 31])
+            self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, out_node_dim - 1])
+
+        self.lin_node_msg_compact['ue'] = mlp([node_dim['ue'], 16, out_node_dim])
+        # self.lin_node_msg_compact['ap'] = mlp([node_dim['ap'], 16, 31])
+
+
+        # for edge_type in metadata[1]:
+        #     self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 31])
+        self.lin_edge_compact['ap__downlink__ue'] = mlp([edge_dim - 1, 16, out_node_dim - 1])
+        self.lin_edge_compact['ue__uplink__ap'] = mlp([edge_dim - 1, 16, out_node_dim])
+
+
+        # self.power_mlp = mlp([32 + 3 - 2, 16])
+        # self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        reset(self.power_mlp)
+        reset(self.lin_edge_compact)
+        reset(self.lin_node_msg_compact)
+        reset(self.lin_node_upd)
+    def forward(
+            self,
+            x_dict: Dict[NodeType, Tensor],
+            edge_index_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]],
+            edge_attr_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]]
+    ) -> tuple[Dict[NodeType, Optional[Tensor]], Union[Dict[EdgeType, Tensor], Dict[EdgeType, SparseTensor]]]:
+        out_node_dict = {}
+        # # Iterate over node-types to initialize the output dictionary
+        # for node_type, node_ft in x_dict.items():
+        #     out_node_dict[node_type] = []
+
+        # Iterate over edge-types to update node_features:
+        for edge_type, edge_index in edge_index_dict.items():
+            edge_attr = edge_attr_dict[edge_type]
+            src_type, _, dst_type = edge_type
+            edge_type = '__'.join(edge_type)
+            x_j = x_dict[src_type]
+            x_i = x_dict[dst_type]
+
+            out = self.propagate(edge_index, x=x_j, node_feat=x_i, src_type=src_type, edge_type=edge_type,
+                                 dst_type=dst_type, edge_attr=edge_attr, size=(x_j.shape[0], x_i.shape[0]))
+            out_node_dict[dst_type] = out
+        return out_node_dict, edge_attr_dict
+
+    def message(self, x_j: Tensor, node_feat: Tensor, src_type, edge_type, edge_attr) -> Tensor:
+        # APs only send the edge_feat (only the channel) to UEs
+        # Ues send the node_ft (only the p_max) and the edge_ft (only the channel)
+
+
+        edge_mlp = self.lin_edge_compact[edge_type]
+        edge_ft = edge_attr[:, :1]
+
+        if src_type == 'ue':
+            node_ft = x_j
+            node_mlp = self.lin_node_msg_compact[src_type]
+            return node_mlp(node_ft) + edge_mlp(edge_ft)
+        else:
+            return edge_mlp(edge_ft)
+
+
+    def update(self, aggr_out, node_feat, dst_type):
+        if dst_type == 'ue':
+          node_mlp = self.lin_node_upd[dst_type]
+          res = node_mlp(node_feat)
+          new_node_feat = aggr_out + res
+          return torch.cat([node_feat[:, :1], new_node_feat], dim=1)
+        else:
+          return aggr_out
 
 class PowerConv(MessagePassing):
     def __init__(self, node_dim: Dict, edge_dim, metadata: Metadata, ap_selection=False, aggr='mean', **kwargs):
@@ -227,18 +332,24 @@ class PowerConv(MessagePassing):
         self.lin_node_upd = ModuleDict()
         self.power_mlp = ModuleDict()
 
+
         for node_type in metadata[0]:
             self.lin_node_msg[node_type] = mlp([node_dim[node_type], 16, 32])
-            self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, 32])
+            # self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, 32])
+            self.lin_node_upd[node_type] = mlp([1, 16, 32])
             # self.power_mlp[node_type] = mlp([32 + node_dim[node_type], 16])
             self.power_mlp[node_type] = mlp([32, 16])
             self.power_mlp[node_type] = Seq(*[self.power_mlp[node_type], Seq(Lin(16, 1, bias=True), Sigmoid())])
 
         for edge_type in metadata[1]:
-            if self.is_ap_selection:
-                self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim, 16, 32])
-            else:
-                self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+            # if self.is_ap_selection:
+            #   self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim, 16, 32])
+            # else:
+            #   self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+            self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+
+        # self.power_mlp = mlp([32 + 3, 16])
+        # self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
     def reset_parameters(self):
         super().reset_parameters()
@@ -256,6 +367,9 @@ class PowerConv(MessagePassing):
             Dict[EdgeType, SparseTensor]]
     ) -> tuple[Dict[NodeType, Optional[Tensor]], Union[Dict[EdgeType, Tensor], Dict[EdgeType, SparseTensor]]]:
         out_node_dict = {}
+        # # Iterate over node-types to initialize the output dictionary
+        # for node_type, node_ft in x_dict.items():
+        #     out_node_dict[node_type] = []
 
         # Iterate over edge-types to update node_features:
         for edge_type, edge_index in edge_index_dict.items():
@@ -277,12 +391,13 @@ class PowerConv(MessagePassing):
         edge_mlp = self.lin_edge_compact[edge_type]
         node_ft = x_j
         if self.is_ap_selection:
-            edge_ft = edge_attr
+          edge_ft = edge_attr[:,:1]
+          ###
+          ap_selection = edge_attr[:, 1].unsqueeze(-1)
+          edge_ft = edge_ft * (ap_selection)
         else:
-            edge_ft = edge_attr[:, :1]
-        ###
-        ap_selection = edge_attr[:, 1].unsqueeze(-1)
-        edge_ft = edge_ft * (1 - ap_selection)
+          edge_ft = edge_attr[:,:1]
+
 
         return node_mlp(node_ft) + edge_mlp(edge_ft)
 
@@ -290,23 +405,232 @@ class PowerConv(MessagePassing):
         power_max = node_feat[:, 0]
         node_mlp = self.lin_node_upd[dst_type]
         final_mlp = self.power_mlp[dst_type]
-        res = node_mlp(node_feat)
+        res = node_mlp(node_feat[:,-1].unsqueeze(-1))
         # tmp = torch.cat([node_feat, aggr_out + res], dim=1)
         # power = final_mlp(tmp)
         power = final_mlp(aggr_out + res)
+
         # return torch.cat([node_feat[:, :-1], power], dim=1)
         if dst_type == 'ue':
-            return torch.cat([power_max.unsqueeze(-1), power], dim=1)
+          return torch.cat([power_max.unsqueeze(-1), power], dim=1)
         else:
-            return power
+          # return power
+          return node_feat
+
+class PowerConv_wAP_old(MessagePassing):
+    def __init__(self, node_dim: Dict, edge_dim, metadata: Metadata, aggr='mean', **kwargs):
+        super(PowerConv_wAP, self).__init__(aggr=aggr)
+        self.lin_node_msg = ModuleDict()
+        self.lin_edge_compact = ModuleDict()
+        self.lin_node_upd = ModuleDict()
+        self.power_mlp = ModuleDict()
+
+        ##
+
+        # self.msg_mlp = ModuleDict()
+        self.msg_mlp = mlp([4, 16, 32])
+
+
+        for node_type in metadata[0]:
+            ##
+            # self.msg_mlp[node_type] = mlp([node_dim[node_type] + 1, 16, 32])
+
+            # self.lin_node_msg[node_type] = mlp([node_dim[node_type], 16, 32])
+            self.lin_node_msg[node_type] = mlp([1, 16, 32])
+            # self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, 32])
+            self.lin_node_upd[node_type] = mlp([1, 16, 32])
+            # self.power_mlp[node_type] = mlp([32 + node_dim[node_type], 16])
+            self.power_mlp[node_type] = mlp([32, 16])
+            self.power_mlp[node_type] = Seq(*[self.power_mlp[node_type], Seq(Lin(16, 1, bias=True), Sigmoid())])
+
+        for edge_type in metadata[1]:
+            # if self.is_ap_selection:
+            #   self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim, 16, 32])
+            # else:
+            #   self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+            self.lin_edge_compact['__'.join(edge_type)] = mlp([edge_dim - 1, 16, 32])
+
+        # self.power_mlp = mlp([32 + 3, 16])
+        # self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        reset(self.power_mlp)
+        reset(self.lin_edge_compact)
+        reset(self.lin_node_msg)
+        reset(self.lin_node_upd)
+        ##
+        reset(self.msg_mlp)
+
+    def forward(
+            self,
+            x_dict: Dict[NodeType, Tensor],
+            edge_index_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]],
+            edge_attr_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]]
+    ) -> tuple[Dict[NodeType, Optional[Tensor]], Union[Dict[EdgeType, Tensor], Dict[EdgeType, SparseTensor]]]:
+        out_node_dict = {}
+        # # Iterate over node-types to initialize the output dictionary
+        # for node_type, node_ft in x_dict.items():
+        #     out_node_dict[node_type] = []
+
+        # Iterate over edge-types to update node_features:
+        for edge_type, edge_index in edge_index_dict.items():
+            edge_attr = edge_attr_dict[edge_type]
+            src_type, _, dst_type = edge_type
+            edge_type = '__'.join(edge_type)
+            x_j = x_dict[src_type]
+            x_i = x_dict[dst_type]
+
+            out = self.propagate(edge_index, x=x_j, node_feat=x_i, src_type=src_type, edge_type=edge_type,
+                                 dst_type=dst_type, edge_attr=edge_attr, size=(x_j.shape[0], x_i.shape[0]))
+            out_node_dict[dst_type] = out
+        return out_node_dict, edge_attr_dict
+
+    def message(self, x_j: Tensor, node_feat, src_type, edge_type, edge_attr) -> Tensor:
+        # each node sends its node_ft (both the p_max and the allocated power) and the edge_ft (only the channel)
+
+        ## New approach
+        # Concat ue_ft, ap_feat, and edge
+        dst_feat = node_feat.repeat(x_j.shape[0]//node_feat.shape[0], 1)
+        edge_ft = edge_attr[:,:1]
+        # ###
+        ap_selection = edge_attr[:, 1].unsqueeze(-1)
+        edge_ft = edge_ft * (ap_selection)
+
+        tmp_msg = torch.cat([x_j, edge_ft, dst_feat], dim = 1)
+        mesage_mlp = self.msg_mlp#[src_type]
+        return mesage_mlp(tmp_msg)
+
+
+
+        # ###
+        # node_mlp = self.lin_node_msg[src_type]
+        # edge_mlp = self.lin_edge_compact[edge_type]
+
+        # edge_ft = edge_attr[:,:1]
+        # ###
+        # ap_selection = edge_attr[:, 1].unsqueeze(-1)
+        # edge_ft = edge_ft * (ap_selection)
+
+        # if src_type == 'ue':
+        #   node_ft = x_j[:,-1].unsqueeze(-1)
+        #   node_ft = node_ft * ap_selection
+        # else:
+        #   node_ft = x_j[:,:1]
+        # # else:
+        # #   node_ft =
+
+        # # if src_type == 'ue':
+        # #     return node_mlp(node_ft) + edge_mlp(edge_ft)
+        # # else:
+        # #     return edge_mlp(edge_ft)
+
+        # return node_mlp(node_ft) + edge_mlp(edge_ft)
+
+    def update(self, aggr_out, node_feat, dst_type):
+        power_max = node_feat[:, 0]
+        node_mlp = self.lin_node_upd[dst_type]
+        final_mlp = self.power_mlp[dst_type]
+        res = node_mlp(node_feat[:,-1].unsqueeze(-1))
+        # tmp = torch.cat([node_feat, aggr_out + res], dim=1)
+        # power = final_mlp(tmp)
+        power = final_mlp(aggr_out + res)
+
+        # return torch.cat([node_feat[:, :-1], power], dim=1)
+        if dst_type == 'ue':
+          return torch.cat([power_max.unsqueeze(-1), power], dim=1)
+        else:
+          # return power
+          return node_feat  # This makes no differences => The old information is enough?
+
+class PowerConv_wAP(MessagePassing):
+    def __init__(self, node_dim: Dict, edge_dim, out_node_dim, metadata: Metadata, aggr='mean', **kwargs):
+        super(PowerConv_wAP, self).__init__(aggr=aggr)
+        self.lin_node_msg = ModuleDict()
+        self.lin_node_upd = ModuleDict()
+        self.msg_mlp = ModuleDict()
+
+
+        all_node_dim = sum(node_dim.values())
+
+        out_dim_dst = { 'ap': out_node_dim,
+                        'ue': out_node_dim - 1}
+        out_dim_src = { 'ue': out_node_dim,
+                        'ap': out_node_dim - 1}
+
+        for node_type in metadata[0]:
+            self.lin_node_msg[node_type] = mlp([node_dim[node_type], 16, out_node_dim - 1])
+            self.lin_node_upd[node_type] = mlp([node_dim[node_type], 16, out_dim_dst[node_type]])
+            self.msg_mlp[node_type] = mlp([all_node_dim + edge_dim - 1, 16, out_dim_src[node_type]])
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        reset(self.lin_node_msg)
+        reset(self.lin_node_upd)
+        reset(self.msg_mlp)
+
+    def forward(
+            self,
+            x_dict: Dict[NodeType, Tensor],
+            edge_index_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]],
+            edge_attr_dict: Union[Dict[EdgeType, Tensor],
+            Dict[EdgeType, SparseTensor]]
+    ) -> tuple[Dict[NodeType, Optional[Tensor]], Union[Dict[EdgeType, Tensor], Dict[EdgeType, SparseTensor]]]:
+        out_node_dict = {}
+        # # Iterate over node-types to initialize the output dictionary
+        # for node_type, node_ft in x_dict.items():
+        #     out_node_dict[node_type] = []
+
+        # Iterate over edge-types to update node_features:
+        for edge_type, edge_index in edge_index_dict.items():
+            edge_attr = edge_attr_dict[edge_type]
+            src_type, _, dst_type = edge_type
+            edge_type = '__'.join(edge_type)
+            x_j = x_dict[src_type]
+            x_i = x_dict[dst_type]
+
+            out = self.propagate(edge_index, x=x_j, node_feat=x_i, src_type=src_type, edge_type=edge_type,
+                                 dst_type=dst_type, edge_attr=edge_attr, size=(x_j.shape[0], x_i.shape[0]))
+            out_node_dict[dst_type] = out
+        return out_node_dict, edge_attr_dict
+
+    def message(self, x_j: Tensor, node_feat, src_type, edge_type, edge_attr) -> Tensor:
+        # each node sends its node_ft (both the p_max and the allocated power) and the edge_ft (only the channel)
+
+        ## New approach
+        dst_feat = node_feat.repeat(x_j.shape[0]//node_feat.shape[0], 1)
+        edge_ft = edge_attr[:,:1]
+        # ###
+        ap_selection = edge_attr[:, 1].unsqueeze(-1)
+        # edge_ft = edge_ft * (ap_selection)
+
+        tmp_msg = torch.cat([x_j, edge_ft, dst_feat], dim=1) # 32 + 32 + 1
+        message_mlp = self.msg_mlp[src_type]
+
+        return message_mlp(tmp_msg)
+
+
+    def update(self, aggr_out, node_feat, dst_type):
+        node_mlp = self.lin_node_upd[dst_type]
+        res = node_mlp(node_feat)
+        new_node_feat = aggr_out + res
+        if dst_type == 'ue':
+          return torch.cat([node_feat[:, :1], new_node_feat], dim=1)
+        else:
+          return new_node_feat
+
 
 
 class EdgeConv(MessagePassing):
     def __init__(self, node_dim: Dict, edge_dim, metadata: Metadata, aggr='mean', **kwargs):
         super(EdgeConv, self).__init__(aggr=aggr)
-        all_nod_dim = 0
-        for node_type in metadata[0]:
-            all_nod_dim = all_nod_dim + node_dim[node_type]
+        # all_nod_dim = 0
+        # for node_type in metadata[0]:
+        #    all_nod_dim = all_nod_dim + node_dim[node_type]
+        all_node_dim = sum(node_dim.values())
         self.ap_mlp = mlp([5, 16])
         self.ap_mlp = Seq(*[self.ap_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
@@ -341,7 +665,7 @@ class EdgeConv(MessagePassing):
         unique_values, _, _ = torch.unique(edge_index[0], return_inverse=True, return_counts=True)
         # for each_ue in unique_values:
         #   print(x[each_ue][1])
-        src_features = x[edge_index[0]]  # [:,1].unsqueeze(-1)
+        src_features = x[edge_index[0]]#[:,1].unsqueeze(-1)
         dst_features = node_feat[edge_index[1]]  # [:,1].unsqueeze(-1)
         edge_features = edge_attr  # [:,1].unsqueeze(-1)
         tmp = torch.cat([src_features, dst_features, edge_features], dim=1)
@@ -380,12 +704,12 @@ class HetNetGNN(nn.Module):
 
         for _ in range(power_layers):
             conv = PowerConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                             metadata=dataset.metadata(), aggr='mean')
+                         metadata=dataset.metadata(), aggr='mean')
             self.convs.append(conv)
 
         for _ in range(ap_selection_layers):
             conv = EdgeConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                            metadata=dataset.metadata(), aggr='mean')
+                         metadata=dataset.metadata(), aggr='mean')
             self.convs.append(conv)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
@@ -393,9 +717,8 @@ class HetNetGNN(nn.Module):
             x_dict, edge_attr_dict = conv(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
         return x_dict, edge_attr_dict
 
-
 class HetNetGNN_v2(nn.Module):
-    def __init__(self, dataset, num_layers, ap_selection=False):
+    def __init__(self, dataset, num_layers):
         super(HetNetGNN_v2, self).__init__()
         ue2ap_layers, power_layers, ap_selection_layers, final_layers = num_layers
 
@@ -408,17 +731,17 @@ class HetNetGNN_v2(nn.Module):
 
         for _ in range(power_layers):
             conv = PowerConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                             metadata=dataset.metadata(), aggr='add')
+                         metadata=dataset.metadata(), aggr='add')
             self.convs.append(conv)
 
         for _ in range(ap_selection_layers):
             conv = EdgeConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                            metadata=dataset.metadata(), aggr='add')
+                         metadata=dataset.metadata(), aggr='add')
             self.convs.append(conv)
 
         for _ in range(final_layers):
-            conv = PowerConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                             metadata=dataset.metadata(), ap_selection=ap_selection, aggr='add')
+            conv = PowerConv_wAP(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
+                         metadata=dataset.metadata(), aggr='add')
             self.convs.append(conv)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
@@ -426,6 +749,43 @@ class HetNetGNN_v2(nn.Module):
             x_dict, edge_attr_dict = conv(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
         return x_dict, edge_attr_dict
 
+
+class HetNetGNN_v3(nn.Module):
+    def __init__(self, dataset, num_layers):
+        super(HetNetGNN_v3, self).__init__()
+        ue2ap_layers, power_layers, ap_selection_layers, final_layers = num_layers
+
+
+
+        self.convs = torch.nn.ModuleList()
+        self.conv1 = Ue2Ap(node_dim={'ue': 1, 'ap': 0}, edge_dim=2,
+                         out_node_dim = 32, metadata=dataset.metadata(), aggr='add')
+        self.conv2 = PowerConv_wAP(node_dim={'ue': 32, 'ap': 32}, edge_dim=2,
+                         out_node_dim = 32, metadata=dataset.metadata(), aggr='add')
+        self.conv3 = PowerConv_wAP(node_dim={'ue': 32, 'ap': 32}, edge_dim=2,
+                         out_node_dim = 32, metadata=dataset.metadata(), aggr='add')
+        # self.conv4 = PowerConv_wAP(node_dim={'ue': 32, 'ap': 32}, edge_dim=2,
+        #                  out_node_dim = 32, metadata=dataset.metadata(), aggr='add')
+
+        self.power_mlp = mlp([32, 16])
+        self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        x_dict, edge_attr_dict = self.conv1(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+        # a = x_dict['ue']
+        # b = x_dict['ap']
+        # print(f'=== Layer 1: ue: {a.shape}, ap: {a.shape}')
+        x_dict, edge_attr_dict = self.conv2(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+        x_dict, edge_attr_dict = self.conv3(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+        # x_dict, edge_attr_dict = self.conv4(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+        ue_feat = x_dict['ue']
+        # print(ue_feat)
+        power = self.power_mlp(ue_feat)
+
+        x_dict['ue'] = torch.cat([x_dict['ue'][:,:1], power], dim=1)
+        # print(x_dict['ue'])
+
+        return x_dict, edge_attr_dict
 
 class HetNetGNN_combine(nn.Module):
     def __init__(self, dataset, num_layers):
@@ -441,11 +801,10 @@ class HetNetGNN_combine(nn.Module):
 
         for _ in range(comb_layers):
             conv = ResourceConv(node_dim={'ue': 2, 'ap': 1}, edge_dim=2,
-                                metadata=dataset.metadata(), ap_selection=False, aggr='mean')
+                         metadata=dataset.metadata(), ap_selection=False, aggr='mean')
             self.convs.append(conv)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
         for conv in self.convs:
             x_dict, edge_attr_dict = conv(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
         return x_dict, edge_attr_dict
-

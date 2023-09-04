@@ -175,8 +175,8 @@ def main(args):
     power_threshold = args.poweru_max
     power_circuit = args.power_cir
 
-    X_train, theta_train, noise_train, theta_train_dummy, X_test, \
-        theta_test, noise_test, theta_test_dummy = data_prepare(args)
+    X_train, theta_train, noise_train, theta_train_dummy, X_test, bandW, EE_result,\
+        theta_test, noise_test, theta_test_dummy, bandW_test, EE_result_test = data_prepare(args)
 
     train_data = convert_to_hetero_data(X_train, power_threshold, theta_train_dummy)
     test_data = convert_to_hetero_data(X_test, power_threshold, theta_test_dummy)
@@ -211,8 +211,7 @@ def main(args):
             print(
                 f'Epoch: {epoch:03d}, Train Loss: {loss:.6f}, Train Sum Rate: {train_sumrate:.4f}, Train Sum Power: {train_sumPower:.0f}, Test Reward: {test_acc:.6f}')
 
-
-    return training_loss, testing_acc
+    return training_loss, testing_acc, bandW, EE_result, bandW_test, EE_result_test
 
 
 if __name__ == "__main__":
@@ -220,7 +219,7 @@ if __name__ == "__main__":
 
     arguments = get_arguments()
 
-    train_loss, test_lost = main(arguments)
+    train_loss, test_lost, bandW, EE_result, bandW_test, EE_result_test = main(arguments)
 
     # print(training_loss)
 

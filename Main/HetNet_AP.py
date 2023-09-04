@@ -119,7 +119,8 @@ def data_prepare(args):
 
     ##
 
-    return X_train, theta_train, noise_train, theta_train_dummy, X_test, theta_test, noise_test, theta_test_dummy
+    return X_train, theta_train, noise_train, theta_train_dummy, bandW, EE_result, \
+        X_test, theta_test, noise_test, theta_test_dummy, bandW_test, EE_result_test
 
 
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):

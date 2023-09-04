@@ -5,7 +5,7 @@ from scipy.spatial import distance_matrix
 
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
-from Utilities.load_file import load_data_from_mat
+from .Utilities.load_file import load_data_from_mat
 
 
 # from WSN_GNN import generate_channels_wsn
@@ -18,17 +18,17 @@ def data_prepare(args):
     N = args.user_num  # number of nodes
     R = args.radius  # radius
 
-    K_test = K if args.K_test else args.K_test
-    N_test = N if args.N_test else args.N_test
-    R_test = R if args.R_test else args.R_test
+    K_test = K if args.ap_num_test else args.ap_num_test
+    N_test = N if args.user_num_test else args.user_num_test
+    R_test = R if args.radius_test else args.radius_test
 
     var_noise = args.noise
 
     train_file = args.train_file
     test_file = args.test_file
 
-    num_train = args.num_train
-    num_test = args.num_test
+    num_train = args.train_num
+    num_test = args.test_num
 
     if train_file != 'blank':
         channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(
@@ -38,18 +38,17 @@ def data_prepare(args):
             # Train and Test from the same File
             if num_train + num_test > num_s:
                 raise RuntimeError("Not Enough Data for Training and Testing")
-            ###
-            num_s = np.min(num_s, num_train + num_test + 1)
+            num_s = np.minimum(num_s, num_train + num_test + 1)
 
             X_test, theta_test, noise_test = channel_load[num_train:(num_train + num_test)] ** 2 / noise, \
                 theta_load[num_train:(num_train + num_test)], 1
 
         else:
             # Train and Test from different Files
-            num_s = np.min(num_s, num_train + 1)
+            num_s = np.minimum(num_s, num_train + 1)
             channel_test, theta_test, power_test, EE_result_test, bandW_test, noise_test, \
                 (num_s_test, num_aps_test, num_ues_test) = load_data_from_mat(train_file)
-            num_s_test = np.min(num_s_test, num_test + 1)
+            num_s_test = np.minimum(num_s_test, num_test + 1)
             K_test = num_aps_test
             N_test = num_ues_test
             channel_test = channel_test[:num_s_test]
@@ -192,20 +191,20 @@ def convert_to_hetero_data(channel_matrices, p_max, ap_selection_matrix):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     for i in range(num_sam):
         x1 = torch.ones(num_users, 1) * p_max
-        x2 = torch.zeros(num_users, 1)  # power allocation
+        x2 = torch.ones(num_users, 1)  # power allocation
         # x3 = torch.tensor(ap_selection)
         # user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
         user_feat = torch.cat((x1, x2), 1)  # features of user_node
-        ap_feat = torch.ones(num_aps, 2)  # features of user_node
+        ap_feat = torch.ones(num_aps, 0)  # features of user_node
         y1 = channel_matrices[i, :, :].reshape(-1, 1)
-        # y2 = ap_selection_matrix[i, :, :].reshape(-1, 1)
-        y2 = torch.ones(num_users * num_aps, 1)
+        y2 = ap_selection_matrix[i, :, :].reshape(-1, 1)
 
         edge_feat_uplink = np.concatenate((y1, y2), 1)
 
         edge_feat_downlink = np.concatenate((y1, y2), 1)
         graph = HeteroData({
-            'ue': {'x': user_feat.to(device)},
+            # 'ue': {'x': user_feat.to(device)},
+            'ue': {'x': x1.to(device)},
             'ap': {'x': ap_feat.to(device)}
         })
         # Create edge types and building the graph connectivity:

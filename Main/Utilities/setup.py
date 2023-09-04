@@ -23,6 +23,21 @@ def get_arguments():
                         help="circuit power of user (mW)")
     parser.add_argument("--bandwidth", type=float, default=180000,
                         help="signal bandwidth (Hz)")
+    """==== TEST PART ===="""
+    parser.add_argument("--user_num_test", type=int, default=0,
+                        help="number of users (UEs) - for Testing")
+    parser.add_argument("--ap_num_test", type=int, default=0,
+                        help="number of access points (APs) - for Testing")
+    parser.add_argument("--noise_test", type=float, default=10e-12,
+                        help="network noise - for Testing")
+    parser.add_argument("--radius_test", type=float, default=0,
+                        help="network area radius - for Testing")
+    parser.add_argument("--poweru_max_test", type=float, default=200,
+                        help="max power of user threshold (mW) - for Testing")
+    parser.add_argument("--power_cir_test", type=float, default=200,
+                        help="circuit power of user (mW) - for Testing")
+    parser.add_argument("--bandwidth_test", type=float, default=180000,
+                        help="signal bandwidth (Hz) - for Testing")
 
     """ ===================================================================== """
     """ ========================== Hyper Parameters ========================= """
@@ -46,6 +61,12 @@ def get_arguments():
     """ ===================================================================== """
     parser.add_argument("--model_mode", type=str, default="withAP",
                         help="withAP | withoutAP")
+    parser.add_argument("--loss_type", type=str, default="GlobalEE",
+                        help="GlobalEE | SumEE | ProdEE")
     parser.add_argument("--generate_data", type=bool, default=True,
                         help="Auto generate Data (True) | Use Input (False)")
+    parser.add_argument("--train_file", type=str, default="blank",
+                        help="Name of Data File for training (inside Main folder)")
+    parser.add_argument("--test_file", type=str, default="blank",
+                        help="Name of Data File for testing (inside Main folder)")
     return parser.parse_args()

@@ -6,7 +6,7 @@ from torch.nn import Sequential as Seq, Linear as Lin, ReLU, Sigmoid
 from torch_geometric.loader import DataLoader
 
 from Main.Utilities.setup import get_arguments
-from Main.Utilities.load_file import load_data_from_mat
+# from Main.Utilities.load_file import load_data_from_mat
 from Main.het_net_gnn import Ue2Ap, PowerConv_wAP, ApSelectConv
 from Main.HetNet_AP import data_prepare, convert_to_hetero_data
 
@@ -93,7 +93,6 @@ def loss_function(power_out, edge_dict, noise_matrix, size, p_cir, loss_type, is
     sum_rate_batch = torch.sum(rate, dim=1)
     sum_power_batch = torch.sum(power_consumed, dim=1)
 
-    loss_type = 'GlobalEE'
     if loss_type == 'GlobalEE':
         # Global Energy Efficiency = sum(Rate)/sum(Power)
         ee_batch = torch.div(sum_rate_batch, sum_power_batch)
@@ -176,12 +175,13 @@ def main(args):
     power_threshold = args.poweru_max
     power_circuit = args.power_cir
 
-    X_train, theta_train, noise_train, theta_train_dummy, X_test, theta_test, noise_test, theta_test_dummy = data_prepare(args)
+    X_train, theta_train, noise_train, theta_train_dummy, X_test, \
+        theta_test, noise_test, theta_test_dummy = data_prepare(args)
 
     train_data = convert_to_hetero_data(X_train, power_threshold, theta_train)
     test_data = convert_to_hetero_data(X_test, power_threshold, theta_test)
 
-    batchSize = 128
+    batchSize = args.batch_size
 
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=0)
     test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=0)
@@ -194,19 +194,18 @@ def main(args):
     model = HetNetGNN_v4(data)
     model = model.to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     training_loss = []
     testing_acc = []
-    change_count = 0
 
-    for epoch in range(1, 1000):
-        train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit)
-        test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit)
+    for epoch in range(1, args.epoch_num):
+        train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type, optimizer)
+        test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
         training_loss.append(loss)
         testing_acc.append(test_acc)
         scheduler.step()
-        if (epoch % 50 == 1):
+        if (epoch % args.per_epoch == 1):
             # tmp = test(test_loader, noise_test, True)
             # sumrate.append(float(tmp))
             print(
@@ -221,9 +220,7 @@ if __name__ == "__main__":
 
     arguments = get_arguments()
 
-
-
-    # training_loss, testing_acc = main_train(args)
+    train_loss, test_lost = main(arguments)
 
     # print(training_loss)
 

@@ -338,7 +338,7 @@ def generate_data_loaders(num_train, num_test, num_ap, num_ue, noise, radius, p_
                 row_idx = np.random.choice(theta_test.shape[1])
                 theta_test[sample_idx, row_idx, col_idx] = 1
     else:
-        mat_file = 'no_time_allo_train_20Aug.mat'
+        mat_file = '../Data/no_time_allo_train_20Aug.mat'
 
         channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(
             mat_file)

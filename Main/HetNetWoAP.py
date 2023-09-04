@@ -427,7 +427,7 @@ if __name__ == '__main__':
             theta_test[sample_idx, row_idx, col_idx] = 1
 
     # Load data
-    mat_file = 'no_time_allo_train_18Aug.mat'
+    mat_file = '../Data/no_time_allo_train_18Aug.mat'
 
     channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_file.load_data_from_mat(mat_file)
 

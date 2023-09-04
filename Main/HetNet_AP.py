@@ -38,17 +38,17 @@ def data_prepare(args):
             # Train and Test from the same File
             if num_train + num_test > num_s:
                 raise RuntimeError("Not Enough Data for Training and Testing")
-            num_s = np.minimum(num_s, num_train + num_test + 1)
-
+            K_test = K
+            N_test = N
             X_test, theta_test, noise_test = channel_load[num_train:(num_train + num_test)] ** 2 / noise, \
                 theta_load[num_train:(num_train + num_test)], 1
 
         else:
             # Train and Test from different Files
-            num_s = np.minimum(num_s, num_train + 1)
+
             channel_test, theta_test, power_test, EE_result_test, bandW_test, noise_test, \
-                (num_s_test, num_aps_test, num_ues_test) = load_data_from_mat(train_file)
-            num_s_test = np.minimum(num_s_test, num_test + 1)
+                (num_s_test, num_aps_test, num_ues_test) = load_data_from_mat(test_file)
+            num_test = np.minimum(num_s_test, num_test)
             K_test = num_aps_test
             N_test = num_ues_test
             channel_test = channel_test[:num_s_test]
@@ -65,6 +65,7 @@ def data_prepare(args):
             X_test, theta_test, noise_test = channel_test[0:num_test] ** 2 / noise_test, \
                 theta_test[0:num_test], 1
 
+        num_train = np.minimum(num_s, num_train)
         channel_load = channel_load[:num_s]
         theta_load = theta_load[:num_s]
         power = power[:num_s]
@@ -78,7 +79,7 @@ def data_prepare(args):
 
         K = num_aps
         N = num_ues
-        X_train, theta_train, noise_train = channel_load[0:num_s] ** 2 / noise, theta_load[0:num_s], 1
+        X_train, theta_train, noise_train = channel_load[0:num_train] ** 2 / noise, theta_load[0:num_train], 1
 
     else:
         X_train, noise_train, pos_train, adj_train, index_train = generate_channels(K, N, num_train, var_noise, R)
@@ -119,6 +120,8 @@ def data_prepare(args):
     ##
 
     return X_train, theta_train, noise_train, theta_train_dummy, X_test, theta_test, noise_test, theta_test_dummy
+
+
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     # print("Generating Data for training and testing")
 

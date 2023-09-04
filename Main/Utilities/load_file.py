@@ -1,6 +1,13 @@
 import os
 import scipy.io
-DEFAULT_DATA_FOLDER = "..\..\Data"
+import sys
+
+if 'win' in sys.platform:
+    DEFAULT_DATA_FOLDER = "..\..\Data"
+else:
+    DEFAULT_DATA_FOLDER = "../../Data"
+
+
 
 def load_data_from_mat(file_path, data_folder=None):
     current_dir = os.path.dirname(__file__)

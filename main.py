@@ -178,8 +178,8 @@ def main(args):
     X_train, theta_train, noise_train, theta_train_dummy, X_test, \
         theta_test, noise_test, theta_test_dummy = data_prepare(args)
 
-    train_data = convert_to_hetero_data(X_train, power_threshold, theta_train)
-    test_data = convert_to_hetero_data(X_test, power_threshold, theta_test)
+    train_data = convert_to_hetero_data(X_train, power_threshold, theta_train_dummy)
+    test_data = convert_to_hetero_data(X_test, power_threshold, theta_test_dummy)
 
     batchSize = args.batch_size
 

@@ -5,6 +5,7 @@ from scipy.spatial import distance_matrix
 
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
+from Utilities.load_file import load_data_from_mat
 
 
 # from WSN_GNN import generate_channels_wsn
@@ -12,6 +13,113 @@ from torch_geometric.loader import DataLoader
 from .GNN_AP import RGCN
 
 
+def data_prepare(args):
+    K = args.ap_num  # number of APs
+    N = args.user_num  # number of nodes
+    R = args.radius  # radius
+
+    K_test = K if args.K_test else args.K_test
+    N_test = N if args.N_test else args.N_test
+    R_test = R if args.R_test else args.R_test
+
+    var_noise = args.noise
+
+    train_file = args.train_file
+    test_file = args.test_file
+
+    num_train = args.num_train
+    num_test = args.num_test
+
+    if train_file != 'blank':
+        channel_load, theta_load, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(
+            train_file)
+
+        if test_file == 'blank':
+            # Train and Test from the same File
+            if num_train + num_test > num_s:
+                raise RuntimeError("Not Enough Data for Training and Testing")
+            ###
+            num_s = np.min(num_s, num_train + num_test + 1)
+
+            X_test, theta_test, noise_test = channel_load[num_train:(num_train + num_test)] ** 2 / noise, \
+                theta_load[num_train:(num_train + num_test)], 1
+
+        else:
+            # Train and Test from different Files
+            num_s = np.min(num_s, num_train + 1)
+            channel_test, theta_test, power_test, EE_result_test, bandW_test, noise_test, \
+                (num_s_test, num_aps_test, num_ues_test) = load_data_from_mat(train_file)
+            num_s_test = np.min(num_s_test, num_test + 1)
+            K_test = num_aps_test
+            N_test = num_ues_test
+            channel_test = channel_test[:num_s_test]
+            theta_test = theta_test[:num_s_test]
+            power_test = power_test[:num_s_test]
+            EE_result_test = EE_result_test[:num_s_test]
+            shuffled_indices = np.arange(num_s_test)
+            np.random.shuffle(shuffled_indices)
+
+            channel_test = channel_test[shuffled_indices]
+            theta_test = theta_test[shuffled_indices]
+            power_test = power_test[shuffled_indices]
+
+            X_test, theta_test, noise_test = channel_test[0:num_test] ** 2 / noise_test, \
+                theta_test[0:num_test], 1
+
+        channel_load = channel_load[:num_s]
+        theta_load = theta_load[:num_s]
+        power = power[:num_s]
+        EE_result = EE_result[:num_s]
+        shuffled_indices = np.arange(num_s)
+        np.random.shuffle(shuffled_indices)
+
+        channel_load = channel_load[shuffled_indices]
+        theta_load = theta_load[shuffled_indices]
+        power = power[shuffled_indices]
+
+        K = num_aps
+        N = num_ues
+        X_train, theta_train, noise_train = channel_load[0:num_s] ** 2 / noise, theta_load[0:num_s], 1
+
+    else:
+        X_train, noise_train, pos_train, adj_train, index_train = generate_channels(K, N, num_train, var_noise, R)
+        X_test, noise_test, pos_test, adj_test, index_test = generate_channels(K_test, N_test, num_test, var_noise, R_test)
+
+        theta_train = np.zeros((num_train, K, N))
+        theta_test = np.zeros((num_test, K_test, N_test))
+        # np.random.randint(2, size=(num_train, K, N))
+        # theta_test = np.random.randint(2, size=(num_test, K_test, N_test))
+
+        for sample_idx in range(theta_train.shape[0]):
+            for col_idx in range(theta_train.shape[2]):
+                row_idx = np.random.choice(theta_train.shape[1])
+                theta_train[sample_idx, row_idx, col_idx] = 1
+
+        for sample_idx in range(theta_test.shape[0]):
+            for col_idx in range(theta_test.shape[2]):
+                row_idx = np.random.choice(theta_test.shape[1])
+                theta_test[sample_idx, row_idx, col_idx] = 1
+
+    ###
+    ## Apply the AP_selection Model - Using the same init model as random
+    theta_train_dummy = np.zeros((num_train, K, N))
+    theta_test_dummy = np.zeros((num_test, K_test, N_test))
+    # np.random.randint(2, size=(num_train, K, N))
+    # theta_test = np.random.randint(2, size=(num_test, K_test, N_test))
+
+    for sample_idx in range(theta_train_dummy.shape[0]):
+        for col_idx in range(theta_train_dummy.shape[2]):
+            row_idx = np.random.choice(theta_train_dummy.shape[1])
+            theta_train_dummy[sample_idx, row_idx, col_idx] = 1
+
+    for sample_idx in range(theta_test_dummy.shape[0]):
+        for col_idx in range(theta_test_dummy.shape[2]):
+            row_idx = np.random.choice(theta_test_dummy.shape[1])
+            theta_test_dummy[sample_idx, row_idx, col_idx] = 1
+
+    ##
+
+    return X_train, theta_train, noise_train, theta_train_dummy, X_test, theta_test, noise_test, theta_test_dummy
 def generate_channels(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     # print("Generating Data for training and testing")
 

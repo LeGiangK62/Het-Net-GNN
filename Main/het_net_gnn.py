@@ -241,7 +241,7 @@ class Ue2Ap_old(MessagePassing):
 
 
 class Ue2Ap(MessagePassing):
-    def __init__(self, node_dim, edge_dim, out_node_dim, metadata: Metadata, aggr='mean', **kwargs):
+    def __init__(self, node_dim: Dict, edge_dim, out_node_dim, metadata: Metadata, aggr='mean', **kwargs):
         super(Ue2Ap, self).__init__(aggr=aggr)
         self.lin_node_msg_compact = ModuleDict()
         self.lin_edge_compact = ModuleDict()

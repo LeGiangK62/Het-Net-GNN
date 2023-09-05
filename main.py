@@ -202,10 +202,10 @@ def main(args):
     for epoch in range(1, args.epoch_num):
         train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type, optimizer)
         test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
-        while (loss == 0 or test_acc == 0):
-            train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type,
-                                                        optimizer)
-            test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
+        # while (loss == 0 or test_acc == 0):
+        #     train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type,
+        #                                                 optimizer)
+        #     test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
 
         training_loss.append(loss)
         testing_acc.append(test_acc)

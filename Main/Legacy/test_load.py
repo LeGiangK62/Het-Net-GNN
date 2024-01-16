@@ -15,7 +15,7 @@ def load_data_from_mat(file_path):
     return channelAll, apSelectionAll, powerAll, EE_All, B, n0, (num_sam, num_ap, num_ue)
 
 
-mat_file = '../Data/no_time_allo_train_17Aug(1).mat'
+mat_file = '../../Data/no_time_allo_train_17Aug(1).mat'
 
 channel, apSelection, power, EE_result, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file)
 

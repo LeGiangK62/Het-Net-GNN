@@ -5,7 +5,7 @@ from torch_geometric.data import Data
 
 from cell_wireless import generate_channels_cell_wireless, GCNet, adj_matrix
 from wmmse import wmmse_cell_network
-from Main.reImplement import graph_build
+from Main.Legacy.reImplement import graph_build
 
 
 def supervised_loss(data, out, num_user, device_type, noise_var):

@@ -5,217 +5,182 @@ import torch.nn as nn
 from torch.nn import Sequential as Seq, Linear as Lin, ReLU, Sigmoid
 from torch_geometric.loader import DataLoader
 
+from Main.Utilities.load_file import loading_data, load_data_from_mat
 from Main.Utilities.setup import get_arguments
-# from Main.Utilities.load_file import load_data_from_mat
-from Main.het_net_gnn import Ue2Ap, PowerConv_wAP, ApSelectConv
-from Main.HetNet_AP import data_prepare, convert_to_hetero_data
+from Main.het_net_gnn import Ue2Ap, EdgeConv, PowerConv
+from Main.Utilities.data_load import convert_to_hetero_data
+from Main.Utilities.train_test_function import train, test
 
 
-def mlp(channels):
+def mlp(channels, batch_norm=True):
     return Seq(*[
-        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())
+        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
         for i in range(1, len(channels))
     ])
 
 
-class HetNetGNN_v4(nn.Module):
-    def __init__(self, dataset):
-        super(HetNetGNN_v4, self).__init__()
-
+class HetNetGNN(nn.Module):
+    def __init__(self, dataset, debugMode=False):
+        super(HetNetGNN, self).__init__()
+        self.debugMode = debugMode
         out_dim = 32
+        edge_out_dim = 8
         self.convs = torch.nn.ModuleList()
-        self.conv1 = Ue2Ap(node_dim={'ue': 1, 'ap': 0}, edge_dim=2,
-                         out_node_dim = out_dim, metadata=dataset.metadata(), aggr='add')
-        self.conv2 = ApSelectConv(node_dim={'ue': out_dim, 'ap': out_dim}, edge_dim=2,
-                         out_node_dim = out_dim, metadata=dataset.metadata(), aggr='add')
-        self.conv3 = PowerConv_wAP(node_dim={'ue': out_dim, 'ap': out_dim}, edge_dim=2,
-                         out_node_dim = out_dim, metadata=dataset.metadata(), aggr='add')
-        self.conv4 = PowerConv_wAP(node_dim={'ue': out_dim, 'ap': out_dim}, edge_dim=2,
-                         out_node_dim = out_dim, metadata=dataset.metadata(), aggr='add')
+        self.conv1 = Ue2Ap(node_dim={'ue': 1, 'ap': 0},
+                           edge_dims={'in': 2, 'out': edge_out_dim},
+                           out_node_dim=out_dim, metadata=dataset.metadata(), aggr='add')
+        self.conv2 = EdgeConv(node_dim={'ue': out_dim, 'ap': out_dim},
+                              edge_dim=edge_out_dim,
+                              out_node_dim=out_dim, metadata=dataset.metadata(), aggr='add')
+        self.conv3 = PowerConv(node_dim={'ue': out_dim, 'ap': out_dim}, edge_dim=edge_out_dim,
+                               out_node_dim=out_dim, metadata=dataset.metadata(), aggr='add')
 
         self.power_mlp = mlp([out_dim, 16])
         self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
-        x_dict, edge_attr_dict = self.conv1(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
-        # a = x_dict['ue']
-        # b = x_dict['ap']
-        # print(f'=== Layer 1: ue: {a.shape}, ap: {a.shape}')
-        x_dict, edge_attr_dict = self.conv2(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
-        x_dict, edge_attr_dict = self.conv3(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
-        x_dict, edge_attr_dict = self.conv4(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+        x_dict, edge_attr_dict = self.conv1(x_dict=x_dict, edge_index_dict=edge_index_dict,
+                                            edge_attr_dict=edge_attr_dict)
+        x_dict, edge_attr_dict = self.conv2(x_dict=x_dict, edge_index_dict=edge_index_dict,
+                                            edge_attr_dict=edge_attr_dict)
+        x_dict, edge_attr_dict = self.conv3(x_dict=x_dict, edge_index_dict=edge_index_dict,
+                                            edge_attr_dict=edge_attr_dict)
+
         ue_feat = x_dict['ue']
-        # print(ue_feat)
         power = self.power_mlp(ue_feat)
 
-        x_dict['ue'] = torch.cat([x_dict['ue'][:,:1], power], dim=1)
-        # print(x_dict['ue'])
+        x_dict['ue'] = torch.cat([x_dict['ue'][:, :1], power], dim=1)
+        return x_dict, edge_attr_dict
+
+
+class HetNetGNN_noAP(nn.Module):
+    def __init__(self, dataset):
+        super(HetNetGNN_noAP, self).__init__()
+
+        out_dim = 32
+        edge_out_dim = 8
+        self.convs = torch.nn.ModuleList()
+        self.conv1 = Ue2Ap(node_dim={'ue': 1, 'ap': 0},
+                           edge_dims={'in': 2, 'out': edge_out_dim},
+                           out_node_dim=out_dim, metadata=dataset.metadata(), aggr='add')
+        self.conv3 = PowerConv(node_dim={'ue': out_dim, 'ap': out_dim}, edge_dim=edge_out_dim,
+                               out_node_dim=out_dim, metadata=dataset.metadata(), aggr='add')
+        self.power_mlp = mlp([out_dim, 16])
+        self.power_mlp = Seq(*[self.power_mlp, Seq(Lin(16, 1, bias=True), Sigmoid())])
+
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        x_dict, edge_attr_dict = self.conv1(x_dict=x_dict, edge_index_dict=edge_index_dict,
+                                            edge_attr_dict=edge_attr_dict)
+        x_dict, edge_attr_dict = self.conv3(x_dict=x_dict, edge_index_dict=edge_index_dict,
+                                            edge_attr_dict=edge_attr_dict)
+        ue_feat = x_dict['ue']
+        power = self.power_mlp(ue_feat)
+
+        x_dict['ue'] = torch.cat([x_dict['ue'][:, :1], power], dim=1)
 
         return x_dict, edge_attr_dict
 
 
-def sum_rate_calculation(power_matrix, ap_selection, channel_matrix,  noise_matrix):
-    P = power_matrix
-    G = channel_matrix
-    new_noise = noise_matrix
-    desired_signal = torch.sum(torch.mul(P, G), dim=1).unsqueeze(-1)
-    P_trans = P.permute(0,2,1)
-    P_UE = torch.sum(P_trans, dim=2).unsqueeze(-1)  # P_UE[n] = The power n-th UE transmits
-    all_received_signal = torch.matmul(G, P_UE)
-    all_signal = torch.matmul(ap_selection.permute(0,2,1), all_received_signal)
-    # max_P,_ = torch.max(P_trans, dim=2)
-    # max_P = max_P.unsqueeze(-1)
-    # print(max_P)
-    # all_signal = torch.div(tmp, max_P)
-    interference = -desired_signal + all_signal + noise_matrix
-    rate = torch.log(1 + torch.div(desired_signal, interference))
-    sum_rate = torch.mean(torch.sum(rate, 1))
-    return sum_rate, rate
-
-
-def loss_function(power_out, edge_dict, noise_matrix, size, p_cir, loss_type, is_train=True):
-    num_ue, num_ap, batch_size = size
-
-    power_out = torch.reshape(power_out, (batch_size, num_ue, -1))
-    channel_matrix = edge_dict['ue', 'uplink', 'ap'][:, 0]
-    power_max = power_out[:, :, 0]
-    power = power_out[:, :, 1] * power_max
-    ap_selection = edge_dict['ue', 'uplink', 'ap'][:, 1]
-    P = torch.reshape(ap_selection, (-1, num_ap, num_ue))
-
-    G = torch.reshape(channel_matrix, (-1, num_ap, num_ue))
-    power = power.unsqueeze(1)
-    # P = P * power
-    sum_rate, rate = sum_rate_calculation(P * power, P, G, noise_matrix)
-    power_all = torch.sum(power, 1).unsqueeze(-1)
-
-    power_consumed = power_all + p_cir
-    sum_rate_batch = torch.sum(rate, dim=1)
-    sum_power_batch = torch.sum(power_consumed, dim=1)
-
-    if loss_type == 'GlobalEE':
-        # Global Energy Efficiency = sum(Rate)/sum(Power)
-        ee_batch = torch.div(sum_rate_batch, sum_power_batch)
-    elif loss_type == 'SumEE':
-        # Sum Energy Efficiency = sum(Rate/Power)
-        ee_batch = torch.sum(torch.div(rate, power_consumed), dim=1)
-    elif loss_type == 'ProdEE':
-        # Product Energy Efficiency = Product(Rate/Power)
-        ee_batch = torch.prod(torch.div(rate, power_consumed), dim=1)
+def main_run(net_type, metadata, train_sample, noise_train, test_sample, noise_test, power_circuit,
+             num_epoch=600, valid_epoch=100, lr=1e-3, debug_mode=False,
+             eps=1e-3, reg=0.01):
+    if net_type not in ["wAP", "woAP", 'combined']:
+        raise ValueError("Invalid input type. Please use 'wAP' or 'woAP'.")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    data = metadata[0]
+    data = data.to(device)
+    if net_type == "woAP":
+        model = HetNetGNN_noAP(data)
     else:
-        raise RuntimeError("Loss Function not Defined!")
-    ee_mean = torch.mean(ee_batch)
+        model = HetNetGNN(data, debug_mode)
+    model = model.to(device)
 
-    if is_train:
-        return sum_rate, torch.neg(ee_mean), torch.mean(sum_power_batch)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    training_loss = []
+    testing_reward= []
+    training_reward = []
+    flag = False
+    for epoch in range(1, num_epoch+1):
+        train_sumrate, loss, train_sumPower, train_ee = train(model, optimizer, train_sample,
+                                                              noise_train, power_circuit, eps, reg)
+        test_acc = test(model, test_sample, noise_test, power_circuit)
+        if loss == 0.0 or test_acc == 0.0:
+            flag = True
+            break
+        training_loss.append(loss)
+        testing_reward.append(test_acc)
+        training_reward.append(train_ee)
+        scheduler.step()
+        if epoch % valid_epoch == 1:
+            print(f'Epoch: {epoch:03d}, Train Loss: {loss:.6f}, Train Energy Efficiency: {train_ee:.4f}, Train Sum '
+                  f'Rate: {train_sumrate:.4f}, Train Sum Power: {train_sumPower:.0f}, Test Reward: {test_acc:.6f}')
 
-    else:
-        return torch.neg(ee_mean)
+    if flag:
+        print('Re-running...')
+        return main_run(net_type, metadata, train_sample, noise_train, test_sample, noise_test, power_circuit,
+                        num_epoch, valid_epoch, lr)
 
-
-def train(data_loader, noise, p_cir, model, loss_type, optimizer):
-    model.train()
-    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_examples = total_loss = sumRate = sumPower = 0
-    for batch in data_loader:
-        optimizer.zero_grad()
-        batch = batch.to(device_type)
-        #
-        num_ues = batch['ue'].num_nodes
-        num_aps = batch['ap'].num_nodes
-        num_edges = batch['ue', 'ap'].num_edges
-        batch_size = int(num_ues * num_aps / num_edges)
-        num_ues = int(num_ues / batch_size)
-        num_aps = int(num_aps / batch_size)
-        #
-        out, edge = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
-        out = out['ue']
-        tmp_sumRate, tmp_loss, tmp_sumPower = loss_function(out, edge, noise, (num_ues, num_aps, batch_size), p_cir,
-                                                            loss_type, True)
-        tmp_loss.backward()
-        optimizer.step()
-        total_examples += batch_size
-        total_loss += float(tmp_loss) * batch_size
-        sumRate += float(tmp_sumRate) * batch_size
-        sumPower += float(tmp_sumPower) * batch_size
-
-    return sumRate / total_examples, total_loss / total_examples, sumPower / total_examples
-
-
-def test(data_loader, noise, p_cir, model, loss_type):
-    model.eval()
-    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_examples = total_loss = 0
-    for batch in data_loader:
-        batch = batch.to(device_type)
-        #
-        num_ues = batch['ue'].num_nodes
-        num_aps = batch['ap'].num_nodes
-        num_edges = batch['ue', 'ap'].num_edges
-        batch_size = int(num_ues * num_aps / num_edges)
-        num_ues = int(num_ues / batch_size)
-        num_aps = int(num_aps / batch_size)
-        #
-        out, edge = model(batch.x_dict, batch.edge_index_dict, batch.edge_attr_dict)
-        out = out['ue']
-
-        tmp_loss = loss_function(out, edge, noise, (num_ues, num_aps, batch_size), p_cir, loss_type, False)
-        total_examples += batch_size
-        total_loss += float(tmp_loss) * batch_size
-
-    last_batch_edge = (edge['ue','uplink','ap'])
-
-    return total_loss / total_examples, last_batch_edge
+    return model, training_loss, testing_reward, training_reward
 
 
 def main(args):
-    # Get arguments
-    args = get_arguments()
-
     power_threshold = args.poweru_max
     power_circuit = args.power_cir
 
-    X_train, theta_train, noise_train, theta_train_dummy, X_test, \
-        theta_test, noise_test, theta_test_dummy = data_prepare(args)
-
-    train_data = convert_to_hetero_data(X_train, power_threshold, theta_train_dummy)
-    test_data = convert_to_hetero_data(X_test, power_threshold, theta_test_dummy)
-
     batchSize = args.batch_size
+    num_train = args.train_num
+    num_test = args.test_num
+
+    K = args.ap_num  # number of APs
+    N = args.user_num  # number of nodes
+    R = args.radius  # radius
+
+    K_test = K
+    N_test = N
+
+    mat_file = args.mat_file
+    ##############
+
+    channel_load, theta_load, power, EE_load, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file)
+    shuffled_indices = np.arange(num_s)
+    np.random.shuffle(shuffled_indices)
+
+    channel_load = channel_load[shuffled_indices]
+    theta_load = theta_load[shuffled_indices]
+    power = power[shuffled_indices]
+
+    (X_train, theta_train, noise_train, EE_res_train), (X_test, theta_test, noise_test, EE_res_test) = loading_data(
+        num_train, num_test, channel_load, theta_load, power, EE_load, noise)
+
+    theta_train = np.zeros((num_train, K, N))
+    theta_test = np.zeros((num_test, K_test, N_test))
+
+    for sample_idx in range(theta_train.shape[0]):
+        for col_idx in range(theta_train.shape[2]):
+            row_idx = np.random.choice(theta_train.shape[1])
+            theta_train[sample_idx, row_idx, col_idx] = 1
+
+    for sample_idx in range(theta_test.shape[0]):
+        for col_idx in range(theta_test.shape[2]):
+            row_idx = np.random.choice(theta_test.shape[1])
+            theta_test[sample_idx, row_idx, col_idx] = 1
+
+    train_data = convert_to_hetero_data(X_train, power_threshold, theta_train)
+    test_data = convert_to_hetero_data(X_test, power_threshold, theta_test)
 
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=0)
     test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=0)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    data = train_data[0]
-    data = data.to(device)
-
-    model = HetNetGNN_v4(data)
-    model = model.to(device)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
-    training_loss = []
-    testing_acc = []
-
-    for epoch in range(1, args.epoch_num):
-        train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type, optimizer)
-        test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
-        # while (loss == 0 or test_acc == 0):
-        #     train_sumrate, loss, train_sumPower = train(train_loader, noise_train, power_circuit, model, args.loss_type,
-        #                                                 optimizer)
-        #     test_acc, last_batch_edge1 = test(test_loader, noise_test, power_circuit, model, args.loss_type)
-
-        training_loss.append(loss)
-        testing_acc.append(test_acc)
-        scheduler.step()
-        if (epoch % args.per_epoch == 1):
-            # tmp = test(test_loader, noise_test, True)
-            # sumrate.append(float(tmp))
-            print(
-                f'Epoch: {epoch:03d}, Train Loss: {loss:.6f}, Train Sum Rate: {train_sumrate:.4f}, Train Sum Power: {train_sumPower:.0f}, Test Reward: {test_acc:.6f}')
-
+    model, training_loss, testing_acc, training_acc = main_run(args.model_mode,
+                                                               metadata=train_data, train_sample=train_loader,
+                                                               noise_train=noise_train,
+                                                               test_sample=test_loader, noise_test=noise_test,
+                                                               power_circuit=power_circuit,
+                                                               num_epoch=args.epoch_num, valid_epoch=args.valid_epoch,
+                                                               lr=args.lr, debug_mode=False,
+                                                               eps=args.eps, reg=args.reg
+                                                               )
     return training_loss, testing_acc
 
 

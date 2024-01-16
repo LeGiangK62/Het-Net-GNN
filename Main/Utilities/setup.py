@@ -43,15 +43,19 @@ def get_arguments():
     """ ========================== Hyper Parameters ========================= """
     """ ===================================================================== """
 
-    parser.add_argument("--batch_size", type=int, default=64,
+    parser.add_argument("--batch_size", type=int, default=16,
                         help="data batch size")
     parser.add_argument("--epoch_num", type=int, default=200,
                         help="number of epochs")
-    parser.add_argument("--per_epoch", type=int, default=50,
+    parser.add_argument("--valid_epoch", type=int, default=50,
                         help="number of epochs per plot result")
-    parser.add_argument("--lr", type=float, default=0.0001,
+    parser.add_argument("--lr", type=float, default=5e-5,
                         help="learning rate")
-    parser.add_argument("--train_num", type=int, default=200,
+    parser.add_argument("--eps", type=float, default=1e-10,
+                        help="Epsilon for log function")
+    parser.add_argument("--reg", type=float, default=0.01,
+                        help="Regularization rate for user association constraints")
+    parser.add_argument("--train_num", type=int, default=500,
                         help="number of training samples")
     parser.add_argument("--test_num", type=int, default=100,
                         help="number of testing samples")
@@ -59,14 +63,9 @@ def get_arguments():
     """ ===================================================================== """
     """ ========================== Model Parameters ========================= """
     """ ===================================================================== """
-    parser.add_argument("--model_mode", type=str, default="withAP",
-                        help="withAP | withoutAP")
-    parser.add_argument("--loss_type", type=str, default="GlobalEE",
-                        help="GlobalEE | SumEE | ProdEE")
-    parser.add_argument("--generate_data", type=bool, default=True,
-                        help="Auto generate Data (True) | Use Input (False)")
-    parser.add_argument("--train_file", type=str, default="blank",
-                        help="Name of Data File for training (inside Main folder)")
-    parser.add_argument("--test_file", type=str, default="blank",
-                        help="Name of Data File for testing (inside Main folder)")
+    parser.add_argument("--model_mode", type=str, default="wAP",
+                        help="wAP (with AP) | woAP (withoutAP)")
+    parser.add_argument("--mat_file", type=str, default="blank",
+                        help="Name of Data File for training and testing (inside Data folder)")
     return parser.parse_args()
+

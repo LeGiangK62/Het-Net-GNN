@@ -7,16 +7,9 @@ from torch_geometric.loader import DataLoader
 
 from Main.Utilities.load_file import loading_data, load_data_from_mat
 from Main.Utilities.setup import get_arguments
-from Main.het_net_gnn import Ue2Ap, EdgeConv, PowerConv
+from Main.het_net_gnn import Ue2Ap, EdgeConv, PowerConv, mlp
 from Main.Utilities.data_load import convert_to_hetero_data
 from Main.Utilities.train_test_function import train, test
-
-
-def mlp(channels, batch_norm=True):
-    return Seq(*[
-        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
-        for i in range(1, len(channels))
-    ])
 
 
 class HetNetGNN(nn.Module):
@@ -142,7 +135,8 @@ def main(args):
     mat_file = args.mat_file
     ##############
 
-    channel_load, theta_load, power, EE_load, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file)
+    channel_load, theta_load, power, EE_load, bandW, noise, (num_s, num_aps, num_ues) = load_data_from_mat(mat_file, 
+                                                                                                           args.default_folder)
     shuffled_indices = np.arange(num_s)
     np.random.shuffle(shuffled_indices)
 

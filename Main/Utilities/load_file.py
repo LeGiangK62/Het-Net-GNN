@@ -9,7 +9,12 @@ else:
 
 
 # Get data from pre-save .mat file
-def load_data_from_mat(file_path):
+def load_data_from_mat(file_path, data_folder=None):
+    current_dir = os.path.dirname(__file__)
+    if data_folder is None:
+        file_path = os.path.join(current_dir, DEFAULT_DATA_FOLDER, file_path)
+    else:
+        file_path = os.path.join(current_dir, "..\..", data_folder, file_path)
     matLoader = scipy.io.loadmat(file_path)
     channelAll = matLoader['channel_python'].transpose(0, 2, 1)
     apSelectionAll = matLoader['mu_python'].transpose(0, 2, 1)

@@ -15,6 +15,13 @@ from torch_geometric.utils import softmax
 from torch_sparse import SparseTensor
 
 
+def mlp(channels, batch_norm=True):
+    return Seq(*[
+        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
+        for i in range(1, len(channels))
+    ])
+
+
 class Ue2Ap(MessagePassing):
     def __init__(self, node_dim: Dict, edge_dims: Dict, out_node_dim, metadata: Metadata, aggr='mean'):
         super(Ue2Ap, self).__init__(aggr=aggr)

@@ -66,6 +66,8 @@ def get_arguments():
     parser.add_argument("--model_mode", type=str, default="wAP",
                         help="wAP (with AP) | woAP (withoutAP)")
     parser.add_argument("--mat_file", type=str, default="blank",
-                        help="Name of Data File for training and testing (inside Data folder)")
+                        help="Name of Data File for training and testing")
+    parser.add_argument("--default_folder", type=str, default=None,
+                        help="The Directory to the Data")
     return parser.parse_args()
 
